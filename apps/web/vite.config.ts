@@ -5,6 +5,13 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
 	server: {
+		// Tailnet names, for machines reaching the dev hub via `tailscale serve`.
+		allowedHosts: ['.ts.net'],
+		// `tailscale serve` also listens on :5173 (tailnet address only), so bind
+		// loopback explicitly and never drift to another port.
+		host: '127.0.0.1',
+		port: 5173,
+		strictPort: true,
 		// In dev, Vite plays the role Caddy has in production: /api (HTTP and
 		// WebSocket) goes to the API, so auth cookies stay on one origin.
 		proxy: {
