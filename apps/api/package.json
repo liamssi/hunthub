@@ -8,13 +8,16 @@
 		"start": "bun src/index.ts",
 		"check": "tsc --noEmit",
 		"db:generate": "bun --env-file=../../.env drizzle-kit generate",
-		"db:migrate": "bun --env-file=../../.env drizzle-kit migrate",
-		"db:studio": "bun --env-file=../../.env drizzle-kit studio"
+		"db:migrate": "bun --env-file=../../.env src/migrate.ts",
+		"db:studio": "bun --env-file=../../.env drizzle-kit studio",
+		"create-admin": "bun --env-file=../../.env src/cli/create-admin.ts"
 	},
 	"dependencies": {
+		"better-auth": "^1.7.6",
 		"drizzle-orm": "^0.45.3",
 		"hono": "^4.13.9",
-		"postgres": "^3.4.9"
+		"postgres": "^3.4.9",
+		"@hunthub/shared": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/bun": "^1.4.2",

@@ -1,11 +1,14 @@
 import { Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { sql } from 'drizzle-orm';
+import { auth } from './auth';
 import { db } from './db';
 
-const app = new Hono();
+const app = new Hono().basePath('/api');
 
 app.use(logger());
+
+app.on(['GET', 'POST'], '/auth/*', (c) => auth.handler(c.req.raw));
 
 app.get('/health', async (c) => {
 	try {

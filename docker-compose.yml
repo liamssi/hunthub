@@ -21,6 +21,8 @@ services:
       dockerfile: apps/api/Dockerfile
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-hunthub}:${POSTGRES_PASSWORD:-hunthub}@postgres:5432/${POSTGRES_DB:-hunthub}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
+      BETTER_AUTH_URL: ${PUBLIC_URL:-http://localhost:3001}
     ports:
       - "3000:3000"
     depends_on:
@@ -33,6 +35,7 @@ services:
       dockerfile: apps/web/Dockerfile
     environment:
       API_URL: http://api:3000
+      ORIGIN: ${PUBLIC_URL:-http://localhost:3001}
     ports:
       - "3001:3000"
     depends_on:

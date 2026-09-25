@@ -1,7 +1,10 @@
 {
 	"name": "hunthub",
 	"private": true,
-	"workspaces": ["apps/*"],
+	"workspaces": [
+		"apps/*",
+		"packages/*"
+	],
 	"scripts": {
 		"db:up": "docker compose up -d postgres",
 		"dev": "bun run --filter './apps/*' dev",

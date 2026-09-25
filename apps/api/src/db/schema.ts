@@ -1,2 +1,2 @@
 // Tables are added here as each step needs them.
-export {};
+export * from './auth-schema';
