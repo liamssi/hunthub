@@ -15,6 +15,13 @@
       "when": 1790343528980,
       "tag": "0001_yielding_inertia",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790366034890,
+      "tag": "0002_narrow_talisman",
+      "breakpoints": true
     }
   ]
 }

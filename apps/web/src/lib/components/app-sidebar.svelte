@@ -2,6 +2,8 @@
 	import type { ComponentProps } from 'svelte';
 	import CrosshairIcon from '@lucide/svelte/icons/crosshair';
 	import HouseIcon from '@lucide/svelte/icons/house';
+	import ServerIcon from '@lucide/svelte/icons/server';
+	import SettingsIcon from '@lucide/svelte/icons/settings';
 	import UsersIcon from '@lucide/svelte/icons/users';
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
 	import NavMain, { type NavSection } from './nav-main.svelte';
@@ -15,9 +17,23 @@
 	}: ComponentProps<typeof Sidebar.Root> & { user: NonNullable<App.Locals['user']> } = $props();
 
 	const sections = $derived<NavSection[]>([
-		{ label: 'Platform', items: [{ title: 'Home', url: '/', icon: HouseIcon }] },
+		{
+			label: 'Platform',
+			items: [
+				{ title: 'Home', url: '/', icon: HouseIcon },
+				{ title: 'Machines', url: '/machines', icon: ServerIcon }
+			]
+		},
 		...(user.role === 'admin'
-			? [{ label: 'Admin', items: [{ title: 'Users', url: '/admin/users', icon: UsersIcon }] }]
+			? [
+					{
+						label: 'Admin',
+						items: [
+							{ title: 'Users', url: '/admin/users', icon: UsersIcon },
+							{ title: 'Settings', url: '/admin/settings', icon: SettingsIcon }
+						]
+					}
+				]
 			: [])
 	]);
 </script>

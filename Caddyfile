@@ -1,0 +1,14 @@
+# Single entry point: /api (HTTP + WebSocket) goes to the API, everything else
+# to the web app. SITE_ADDRESS is ":80" for plain HTTP (local/dev), or a domain
+# name (e.g. hub.example.com) to get automatic HTTPS.
+{$SITE_ADDRESS::80} {
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy api:3000
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}

@@ -4,6 +4,13 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+	server: {
+		// In dev, Vite plays the role Caddy has in production: /api (HTTP and
+		// WebSocket) goes to the API, so auth cookies stay on one origin.
+		proxy: {
+			'/api': { target: process.env.API_URL ?? 'http://localhost:3000', ws: true, xfwd: true }
+		}
+	},
 	plugins: [
 		tailwindcss(),
 		sveltekit({

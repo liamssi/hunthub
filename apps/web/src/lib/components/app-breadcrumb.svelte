@@ -7,15 +7,23 @@
 		'/': 'Home',
 		'/admin': 'Admin',
 		'/admin/users': 'Users',
-		'/account': 'Account'
+		'/admin/settings': 'Settings',
+		'/account': 'Account',
+		'/machines': 'Machines'
 	};
+
+	/** Label for a path, including detail pages that name what they show. */
+	function labelFor(path: string): string | undefined {
+		if (labels[path]) return labels[path];
+		if (/^\/machines\/[^/]+$/.test(path)) return page.data.machine?.name;
+	}
 
 	const crumbs = $derived.by(() => {
 		const segments = page.url.pathname.split('/').filter(Boolean);
 		const paths = segments.map((_, i) => '/' + segments.slice(0, i + 1).join('/'));
 		return (paths.length ? paths : ['/'])
-			.filter((p) => labels[p])
-			.map((p) => ({ href: p, label: labels[p] }));
+			.map((p) => ({ href: p, label: labelFor(p) }))
+			.filter((c): c is { href: string; label: string } => !!c.label);
 	});
 </script>
 

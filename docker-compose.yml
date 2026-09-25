@@ -1,6 +1,24 @@
-# Ports are bound to 127.0.0.1: reachable from this machine only.
-# Only the web app is meant to be public; put a TLS reverse proxy in front of it.
+# Caddy is the single entry point (web app + /api, including WebSockets).
+# Ports are bound to 127.0.0.1: reachable from this machine only. For a real
+# deployment set SITE_ADDRESS to a domain (automatic HTTPS) and publish 80/443.
 services:
+  caddy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    ports:
+      - "127.0.0.1:3001:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
   postgres:
     image: postgres:17.11
     restart: unless-stopped
@@ -28,8 +46,6 @@ services:
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
       BETTER_AUTH_URL: ${PUBLIC_URL:-http://localhost:3001}
       TRUSTED_ORIGINS: ${TRUSTED_ORIGINS:-}
-    ports:
-      - "127.0.0.1:3000:3000" # lets the dev web server (:5173) use this API; remove in production
     security_opt:
       - no-new-privileges:true
     depends_on:
@@ -44,8 +60,9 @@ services:
     environment:
       API_URL: http://api:3000
       ORIGIN: ${PUBLIC_URL:-http://localhost:3001}
-    ports:
-      - "127.0.0.1:3001:3000"
+      # Only reachable through Caddy, which sets the real client IP.
+      ADDRESS_HEADER: X-Forwarded-For
+      XFF_DEPTH: "1"
     security_opt:
       - no-new-privileges:true
     depends_on:
@@ -54,3 +71,5 @@ services:
 
 volumes:
   pgdata:
+  caddy_data:
+  caddy_config:

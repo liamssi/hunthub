@@ -1,0 +1,21 @@
+{
+	"name": "runner",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"scripts": {
+		"dev": "bun src/index.ts",
+		"check": "tsc --noEmit",
+		"test": "bun test",
+		"build": "bun build src/index.ts --compile --minify --target=bun-linux-x64 --outfile dist/hunthub-runner-linux-x64 && bun build src/index.ts --compile --minify --target=bun-linux-arm64 --outfile dist/hunthub-runner-linux-arm64",
+		"bundle": "bun build src/index.ts --target=bun --minify --outfile dist/hunthub-runner.js"
+	},
+	"dependencies": {
+		"@hunthub/shared": "workspace:*",
+		"zod": "^4.6.5"
+	},
+	"devDependencies": {
+		"@types/bun": "^1.4.2",
+		"typescript": "^6.0.3"
+	}
+}

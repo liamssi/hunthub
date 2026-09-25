@@ -4,9 +4,14 @@
 	"version": "0.0.1",
 	"type": "module",
 	"exports": {
-		"./permissions": "./src/permissions.ts"
+		"./permissions": "./src/permissions.ts",
+		"./runner-protocol": "./src/runner-protocol.ts",
+		"./machines": "./src/machines.ts"
 	},
 	"peerDependencies": {
 		"better-auth": "*"
+	},
+	"dependencies": {
+		"zod": "^4.6.5"
 	}
 }

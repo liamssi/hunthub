@@ -4,6 +4,7 @@ WORKDIR /app
 COPY package.json bun.lock ./
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
+COPY apps/runner/package.json apps/runner/
 COPY packages/shared/package.json packages/shared/
 RUN bun install --frozen-lockfile --filter web
 
@@ -21,5 +22,5 @@ ENV NODE_ENV=production PORT=3000
 USER bun
 EXPOSE 3000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
-	CMD ["bun", "-e", "fetch('http://localhost:3000/login').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+	CMD ["bun", "-e", "fetch('http://localhost:3000/login', { headers: { 'x-forwarded-for': '127.0.0.1' } }).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
 CMD ["bun", "build/index.js"]

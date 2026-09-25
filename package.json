@@ -10,6 +10,7 @@
 		"dev": "bun run --filter './apps/*' dev",
 		"dev:api": "bun run --filter api dev",
 		"dev:web": "bun run --filter web dev",
-		"check": "bun run --filter './apps/*' check"
+		"check": "bun run --filter './apps/*' check",
+		"dev:runner": "bun run --filter runner dev"
 	}
 }
