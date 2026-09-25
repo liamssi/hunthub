@@ -5,5 +5,5 @@ import * as schema from './schema';
 const url = process.env.DATABASE_URL;
 if (!url) throw new Error('DATABASE_URL is not set');
 
-export const client = postgres(url);
+export const client = postgres(url, { max: 10 });
 export const db = drizzle(client, { schema });

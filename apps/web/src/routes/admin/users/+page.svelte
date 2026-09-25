@@ -1,52 +1,65 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { invalidate } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
-	import { page } from '$app/state';
+	import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
 	import { authClient } from '$lib/auth-client';
+	import { toastAuthError } from '$lib/auth-errors';
+	import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import CreateUserDialog from './create-user-dialog.svelte';
 	import ResetPasswordDialog from './reset-password-dialog.svelte';
+	import type { AdminUser } from './+page.server';
 
-	type User = { id: string; name: string; email: string; role?: string | null; banned?: boolean | null; createdAt: Date };
+	let { data } = $props();
 
-	let users = $state<User[]>([]);
-	let loading = $state(true);
-	let resetFor = $state<User | null>(null);
+	let pendingId = $state<string | null>(null);
+	let resetFor = $state<AdminUser | null>(null);
 
-	const currentUserId = $derived(page.data.user?.id);
+	type Confirmable = { user: AdminUser; kind: 'disable' | 'make-admin' };
+	let confirming = $state<Confirmable | null>(null);
+	// Kept separately so the dialog text doesn't change while it animates closed.
+	let confirmShown = $state<Confirmable | null>(null);
+	$effect(() => {
+		if (confirming) confirmShown = confirming;
+	});
 
-	async function load() {
-		const { data, error } = await authClient.admin.listUsers({
-			query: { limit: 500, sortBy: 'createdAt', sortDirection: 'asc' }
-		});
-		loading = false;
-		if (error) return toast.error(error.message ?? 'Failed to load users');
-		users = data.users as User[];
-	}
+	const currentUserId = $derived(data.user?.id);
 
-	async function run(action: Promise<{ error: { message?: string } | null }>, success: string) {
-		const { error } = await action;
-		if (error) return toast.error(error.message ?? 'Action failed');
+	async function run(user: AdminUser, action: () => Promise<{ error: { message?: string; code?: string } | null }>, success: string) {
+		pendingId = user.id;
+		const { error } = await action();
+		pendingId = null;
+		if (error) return toastAuthError(error, 'Action failed');
 		toast.success(success);
-		await load();
+		await invalidate('app:users');
 	}
 
-	const setRole = (u: User, role: 'admin' | 'member') =>
-		run(authClient.admin.setRole({ userId: u.id, role }), `${u.name} is now ${role}`);
-	const disable = (u: User) => run(authClient.admin.banUser({ userId: u.id }), `${u.name} disabled`);
-	const enable = (u: User) => run(authClient.admin.unbanUser({ userId: u.id }), `${u.name} enabled`);
-	const revokeSessions = (u: User) =>
-		run(authClient.admin.revokeUserSessions({ userId: u.id }), `Signed ${u.name} out everywhere`);
+	const makeMember = (u: AdminUser) =>
+		run(u, () => authClient.admin.setRole({ userId: u.id, role: 'member' }), `${u.name} is now a member`);
+	const enable = (u: AdminUser) => run(u, () => authClient.admin.unbanUser({ userId: u.id }), `${u.name} enabled`);
+	const revokeSessions = (u: AdminUser) =>
+		run(u, () => authClient.admin.revokeUserSessions({ userId: u.id }), `Signed ${u.name} out everywhere`);
 
-	onMount(load);
+	async function confirmAction() {
+		if (!confirming) return;
+		const { user, kind } = confirming;
+		confirming = null;
+		if (kind === 'disable') {
+			await run(user, () => authClient.admin.banUser({ userId: user.id }), `${user.name} disabled`);
+		} else {
+			await run(user, () => authClient.admin.setRole({ userId: user.id, role: 'admin' }), `${user.name} is now an admin`);
+		}
+	}
 </script>
+
+<svelte:head><title>Users · HuntHub</title></svelte:head>
 
 <div class="flex items-center justify-between">
 	<h1 class="text-2xl font-semibold">Users</h1>
-	<CreateUserDialog onCreated={load} />
+	<CreateUserDialog onCreated={() => invalidate('app:users')} />
 </div>
 
 <div class="mt-6 rounded-md border">
@@ -54,21 +67,21 @@
 		<Table.Header>
 			<Table.Row>
 				<Table.Head>Name</Table.Head>
-				<Table.Head>Email</Table.Head>
+				<Table.Head class="hidden sm:table-cell">Email</Table.Head>
 				<Table.Head>Role</Table.Head>
 				<Table.Head>Status</Table.Head>
-				<Table.Head class="w-12"></Table.Head>
+				<Table.Head class="w-12"><span class="sr-only">Actions</span></Table.Head>
 			</Table.Row>
 		</Table.Header>
 		<Table.Body>
-			{#if loading}
-				<Table.Row><Table.Cell colspan={5} class="text-muted-foreground">Loading…</Table.Cell></Table.Row>
-			{/if}
-			{#each users as u (u.id)}
+			{#each data.users as u (u.id)}
 				{@const isSelf = u.id === currentUserId}
 				<Table.Row>
-					<Table.Cell class="font-medium">{u.name}{isSelf ? ' (you)' : ''}</Table.Cell>
-					<Table.Cell>{u.email}</Table.Cell>
+					<Table.Cell class="font-medium">
+						{u.name}{isSelf ? ' (you)' : ''}
+						<div class="text-xs font-normal text-muted-foreground sm:hidden">{u.email}</div>
+					</Table.Cell>
+					<Table.Cell class="hidden sm:table-cell">{u.email}</Table.Cell>
 					<Table.Cell>
 						<Badge variant={u.role === 'admin' ? 'default' : 'secondary'}>{u.role ?? 'member'}</Badge>
 					</Table.Cell>
@@ -77,32 +90,63 @@
 					</Table.Cell>
 					<Table.Cell>
 						<DropdownMenu.Root>
-							<DropdownMenu.Trigger>
+							<DropdownMenu.Trigger disabled={pendingId === u.id}>
 								{#snippet child({ props })}
-									<Button {...props} variant="ghost" size="sm" aria-label="Actions for {u.name}">…</Button>
+									<Button {...props} variant="ghost" size="icon-sm" aria-label="Actions for {u.name}">
+										<EllipsisIcon />
+									</Button>
 								{/snippet}
 							</DropdownMenu.Trigger>
 							<DropdownMenu.Content align="end">
-								{#if u.role === 'admin'}
-									<DropdownMenu.Item disabled={isSelf} onSelect={() => setRole(u, 'member')}>Make member</DropdownMenu.Item>
-								{:else}
-									<DropdownMenu.Item onSelect={() => setRole(u, 'admin')}>Make admin</DropdownMenu.Item>
-								{/if}
-								<DropdownMenu.Item onSelect={() => (resetFor = u)}>Reset password</DropdownMenu.Item>
-								<DropdownMenu.Item disabled={isSelf} onSelect={() => revokeSessions(u)}>Sign out everywhere</DropdownMenu.Item>
+								<DropdownMenu.Group>
+									{#if u.role === 'admin'}
+										<DropdownMenu.Item disabled={isSelf} onSelect={() => makeMember(u)}>Make member</DropdownMenu.Item>
+									{:else}
+										<DropdownMenu.Item onSelect={() => (confirming = { user: u, kind: 'make-admin' })}>Make admin</DropdownMenu.Item>
+									{/if}
+									<DropdownMenu.Item onSelect={() => (resetFor = u)}>Reset password</DropdownMenu.Item>
+									<DropdownMenu.Item disabled={isSelf} onSelect={() => revokeSessions(u)}>Sign out everywhere</DropdownMenu.Item>
+								</DropdownMenu.Group>
 								<DropdownMenu.Separator />
-								{#if u.banned}
-									<DropdownMenu.Item onSelect={() => enable(u)}>Enable</DropdownMenu.Item>
-								{:else}
-									<DropdownMenu.Item variant="destructive" disabled={isSelf} onSelect={() => disable(u)}>Disable</DropdownMenu.Item>
-								{/if}
+								<DropdownMenu.Group>
+									{#if u.banned}
+										<DropdownMenu.Item onSelect={() => enable(u)}>Enable</DropdownMenu.Item>
+									{:else}
+										<DropdownMenu.Item variant="destructive" disabled={isSelf} onSelect={() => (confirming = { user: u, kind: 'disable' })}>
+											Disable
+										</DropdownMenu.Item>
+									{/if}
+								</DropdownMenu.Group>
 							</DropdownMenu.Content>
 						</DropdownMenu.Root>
 					</Table.Cell>
 				</Table.Row>
+			{:else}
+				<Table.Row><Table.Cell colspan={5} class="text-muted-foreground">No users yet.</Table.Cell></Table.Row>
 			{/each}
 		</Table.Body>
 	</Table.Root>
 </div>
 
 <ResetPasswordDialog bind:user={resetFor} />
+
+<AlertDialog.Root open={confirming !== null} onOpenChange={(open) => !open && (confirming = null)}>
+	<AlertDialog.Content>
+		<AlertDialog.Header>
+			{#if confirmShown?.kind === 'disable'}
+				<AlertDialog.Title>Disable {confirmShown.user.name}?</AlertDialog.Title>
+				<AlertDialog.Description>They are signed out everywhere and can't sign in until an admin enables them again.</AlertDialog.Description>
+			{:else}
+				<AlertDialog.Title>Make {confirmShown?.user.name} an admin?</AlertDialog.Title>
+				<AlertDialog.Description>Admins can create and disable users, reset passwords and change roles.</AlertDialog.Description>
+			{/if}
+		</AlertDialog.Header>
+		<AlertDialog.Footer>
+			<AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+			<AlertDialog.Action
+				class={confirmShown?.kind === 'disable' ? 'bg-destructive text-white hover:bg-destructive/90' : ''}
+				onclick={confirmAction}>{confirmShown?.kind === 'disable' ? 'Disable' : 'Make admin'}</AlertDialog.Action
+			>
+		</AlertDialog.Footer>
+	</AlertDialog.Content>
+</AlertDialog.Root>

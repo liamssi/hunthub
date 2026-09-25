@@ -1,12 +1,19 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
 	import { authClient } from '$lib/auth-client';
+	import { toastAuthError } from '$lib/auth-errors';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
-	import { Input } from '$lib/components/ui/input/index.js';
-	import { Label } from '$lib/components/ui/label/index.js';
+	import * as Field from '$lib/components/ui/field/index.js';
+	import PasswordInput from '$lib/components/password-input.svelte';
 
 	let { user = $bindable() }: { user: { id: string; name: string } | null } = $props();
+
+	// Kept separately so the dialog text doesn't change while it animates closed.
+	let target = $state<{ id: string; name: string } | null>(null);
+	$effect(() => {
+		if (user) target = user;
+	});
 
 	let password = $state('');
 	let submitting = $state(false);
@@ -18,12 +25,12 @@
 
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
-		if (!user) return;
+		if (!target) return;
 		submitting = true;
-		const { error } = await authClient.admin.setUserPassword({ userId: user.id, newPassword: password });
+		const { error } = await authClient.admin.setUserPassword({ userId: target.id, newPassword: password });
 		submitting = false;
-		if (error) return toast.error(error.message ?? 'Failed to reset password');
-		toast.success(`Password reset for ${user.name}`);
+		if (error) return toastAuthError(error, 'Failed to reset password');
+		toast.success(`Password reset for ${target.name}; they were signed out everywhere`);
 		close();
 	}
 </script>
@@ -32,16 +39,19 @@
 	<Dialog.Content class="sm:max-w-md">
 		<Dialog.Header>
 			<Dialog.Title>Reset password</Dialog.Title>
-			<Dialog.Description>Set a new password for {user?.name}.</Dialog.Description>
+			<Dialog.Description>Set a new password for {target?.name}. They will be signed out everywhere.</Dialog.Description>
 		</Dialog.Header>
-		<form onsubmit={submit} class="grid gap-4">
-			<div class="grid gap-2">
-				<Label for="reset-password">New password</Label>
-				<Input id="reset-password" type="password" autocomplete="new-password" minlength={8} required bind:value={password} />
-			</div>
-			<Dialog.Footer>
-				<Button type="submit" disabled={submitting}>{submitting ? 'Saving…' : 'Set password'}</Button>
-			</Dialog.Footer>
+		<form onsubmit={submit}>
+			<Field.Group>
+				<Field.Field>
+					<Field.Label for="reset-password">New password</Field.Label>
+					<PasswordInput id="reset-password" autocomplete="new-password" minlength={12} required bind:value={password} />
+					<Field.Description>At least 12 characters.</Field.Description>
+				</Field.Field>
+				<Dialog.Footer>
+					<Button type="submit" disabled={submitting}>{submitting ? 'Saving…' : 'Set password'}</Button>
+				</Dialog.Footer>
+			</Field.Group>
 		</form>
 	</Dialog.Content>
 </Dialog.Root>

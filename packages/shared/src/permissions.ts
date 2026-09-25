@@ -5,7 +5,11 @@ import { adminAc, defaultStatements, userAc } from 'better-auth/plugins/admin/ac
 export const ac = createAccessControl(defaultStatements);
 
 export const roles = {
-	admin: ac.newRole(adminAc.statements),
+	// Admins manage users and sessions, but may not impersonate anyone.
+	admin: ac.newRole({
+		...adminAc.statements,
+		user: adminAc.statements.user.filter((action) => action !== 'impersonate')
+	}),
 	member: ac.newRole(userAc.statements)
 };
 

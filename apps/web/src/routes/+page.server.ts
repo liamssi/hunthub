@@ -1,14 +1,14 @@
-import { apiUrl } from '$lib/server/api';
+import { apiFetch } from '$lib/server/api';
 import type { PageServerLoad } from './$types';
 
 type Health = { status: string; db: string };
 
-export const load: PageServerLoad = async ({ fetch }) => {
+export const load: PageServerLoad = async (event) => {
 	try {
-		const res = await fetch(`${apiUrl}/api/health`);
+		const res = await apiFetch(event, '/api/health');
 		const health: Health = await res.json();
-		return { api: 'ok', health };
+		return { api: res.ok ? 'ok' : 'degraded', db: health.db };
 	} catch {
-		return { api: 'unreachable', health: null };
+		return { api: 'unreachable', db: 'unknown' };
 	}
 };

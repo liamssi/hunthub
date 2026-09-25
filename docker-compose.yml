@@ -1,12 +1,15 @@
+# Ports are bound to 127.0.0.1: reachable from this machine only.
+# Only the web app is meant to be public; put a TLS reverse proxy in front of it.
 services:
   postgres:
-    image: postgres:17
+    image: postgres:17.11
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-hunthub}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hunthub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-hunthub}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432" # for local dev tools; remove in production
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -19,12 +22,16 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-hunthub}:${POSTGRES_PASSWORD:-hunthub}@postgres:5432/${POSTGRES_DB:-hunthub}
+      DATABASE_URL: postgres://${POSTGRES_USER:-hunthub}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hunthub}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
       BETTER_AUTH_URL: ${PUBLIC_URL:-http://localhost:3001}
+      TRUSTED_ORIGINS: ${TRUSTED_ORIGINS:-}
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000" # lets the dev web server (:5173) use this API; remove in production
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       postgres:
         condition: service_healthy
@@ -33,13 +40,17 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
     environment:
       API_URL: http://api:3000
       ORIGIN: ${PUBLIC_URL:-http://localhost:3001}
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
+    security_opt:
+      - no-new-privileges:true
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
 volumes:
   pgdata:

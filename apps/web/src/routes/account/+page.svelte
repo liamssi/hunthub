@@ -1,55 +1,55 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { invalidate, invalidateAll } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
-	import { page } from '$app/state';
 	import { authClient } from '$lib/auth-client';
+	import { toastAuthError } from '$lib/auth-errors';
+	import { describeUserAgent } from '$lib/user-agent';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
-	import { Input } from '$lib/components/ui/input/index.js';
-	import { Label } from '$lib/components/ui/label/index.js';
+	import * as Field from '$lib/components/ui/field/index.js';
+	import PasswordInput from '$lib/components/password-input.svelte';
+	import type { AccountSession } from './+page.server';
 
-	type Session = { id: string; token: string; createdAt: Date; ipAddress?: string | null; userAgent?: string | null };
+	let { data } = $props();
 
 	let currentPassword = $state('');
 	let newPassword = $state('');
 	let saving = $state(false);
-	let sessions = $state<Session[]>([]);
+	let revokingId = $state<string | null>(null);
 
-	const currentSessionId = $derived(page.data.session?.id);
-
-	async function loadSessions() {
-		const { data, error } = await authClient.listSessions();
-		if (error) return toast.error(error.message ?? 'Failed to load sessions');
-		sessions = data as Session[];
-	}
+	const formatDate = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
 	async function changePassword(event: SubmitEvent) {
 		event.preventDefault();
 		saving = true;
 		const { error } = await authClient.changePassword({ currentPassword, newPassword, revokeOtherSessions: true });
 		saving = false;
-		if (error) return toast.error(error.message ?? 'Failed to change password');
+		if (error) return toastAuthError(error, 'Failed to change password');
 		toast.success('Password changed; other sessions were signed out');
 		currentPassword = newPassword = '';
-		await loadSessions();
+		// Changing the password replaces the current session; reload everything.
+		await invalidateAll();
 	}
 
-	async function revoke(s: Session) {
+	async function revoke(s: AccountSession) {
+		revokingId = s.id;
 		const { error } = await authClient.revokeSession({ token: s.token });
-		if (error) return toast.error(error.message ?? 'Failed to revoke session');
-		await loadSessions();
+		revokingId = null;
+		if (error) return toastAuthError(error, 'Failed to revoke session');
+		toast.success('Session signed out');
+		await invalidate('app:sessions');
 	}
 
 	async function revokeOthers() {
 		const { error } = await authClient.revokeOtherSessions();
-		if (error) return toast.error(error.message ?? 'Failed to revoke sessions');
+		if (error) return toastAuthError(error, 'Failed to revoke sessions');
 		toast.success('Signed out of other sessions');
-		await loadSessions();
+		await invalidate('app:sessions');
 	}
-
-	onMount(loadSessions);
 </script>
+
+<svelte:head><title>Account · HuntHub</title></svelte:head>
 
 <h1 class="text-2xl font-semibold">Account</h1>
 
@@ -60,16 +60,21 @@
 			<Card.Description>Other sessions are signed out when you change it.</Card.Description>
 		</Card.Header>
 		<Card.Content>
-			<form onsubmit={changePassword} class="grid gap-4">
-				<div class="grid gap-2">
-					<Label for="current-password">Current password</Label>
-					<Input id="current-password" type="password" autocomplete="current-password" required bind:value={currentPassword} />
-				</div>
-				<div class="grid gap-2">
-					<Label for="new-password">New password</Label>
-					<Input id="new-password" type="password" autocomplete="new-password" minlength={8} required bind:value={newPassword} />
-				</div>
-				<Button type="submit" disabled={saving} class="justify-self-start">{saving ? 'Saving…' : 'Change password'}</Button>
+			<form onsubmit={changePassword}>
+				<!-- Tells password managers which account this form is for. -->
+				<input type="text" name="username" autocomplete="username" value={data.user?.email} hidden readonly />
+				<Field.Group>
+					<Field.Field>
+						<Field.Label for="current-password">Current password</Field.Label>
+						<PasswordInput id="current-password" autocomplete="current-password" required bind:value={currentPassword} />
+					</Field.Field>
+					<Field.Field>
+						<Field.Label for="new-password">New password</Field.Label>
+						<PasswordInput id="new-password" autocomplete="new-password" minlength={12} required bind:value={newPassword} />
+						<Field.Description>At least 12 characters.</Field.Description>
+					</Field.Field>
+					<Button type="submit" disabled={saving} class="justify-self-start">{saving ? 'Saving…' : 'Change password'}</Button>
+				</Field.Group>
 			</form>
 		</Card.Content>
 	</Card.Root>
@@ -80,22 +85,24 @@
 			<Card.Description>Where you're signed in.</Card.Description>
 		</Card.Header>
 		<Card.Content class="grid gap-3">
-			{#each sessions as s (s.id)}
+			{#each data.sessions as s (s.id)}
 				<div class="flex min-w-0 items-center justify-between gap-4 rounded-md border p-3 text-sm">
 					<div class="min-w-0">
-						<div class="truncate">{s.userAgent ?? 'Unknown device'}</div>
+						<div class="truncate font-medium" title={s.userAgent ?? undefined}>{describeUserAgent(s.userAgent)}</div>
 						<div class="truncate text-muted-foreground">
-							{s.ipAddress ?? 'unknown IP'} · since {new Date(s.createdAt).toLocaleString()}
+							{s.ipAddress || 'Unknown IP'} · signed in {formatDate.format(new Date(s.createdAt))}
 						</div>
 					</div>
-					{#if s.id === currentSessionId}
+					{#if s.id === data.session?.id}
 						<Badge variant="secondary" class="shrink-0">This session</Badge>
 					{:else}
-						<Button variant="outline" size="sm" class="shrink-0" onclick={() => revoke(s)}>Revoke</Button>
+						<Button variant="outline" size="sm" class="shrink-0" disabled={revokingId === s.id} onclick={() => revoke(s)}>
+							{revokingId === s.id ? 'Revoking…' : 'Revoke'}
+						</Button>
 					{/if}
 				</div>
 			{/each}
-			{#if sessions.length > 1}
+			{#if data.sessions.length > 1}
 				<Button variant="outline" class="justify-self-start" onclick={revokeOthers}>Sign out of all other sessions</Button>
 			{/if}
 		</Card.Content>

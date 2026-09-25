@@ -21,20 +21,22 @@ bun run db:up      # start Postgres in Docker
 bun run dev        # API on :3000, web on :5173
 ```
 
-Set `BETTER_AUTH_SECRET` in `.env` (`openssl rand -base64 32`). Then apply migrations and create the first admin:
+Fill in `POSTGRES_PASSWORD` (and `DATABASE_URL`) and `BETTER_AUTH_SECRET` in `.env` (see the comments there). Then apply migrations and create the first admin (it prompts for the password):
 
 ```bash
 cd apps/api
 bun run db:migrate
-bun run create-admin you@example.com "Your Name" 'a-strong-password'
+bun run create-admin you@example.com "Your Name"
 ```
 
 ## Full stack in Docker
 
 ```bash
 docker compose up -d --build   # API on :3000, web on :3001 (migrations run on start)
-docker compose exec api bun src/cli/create-admin.ts you@example.com "Your Name" 'a-strong-password'
+docker compose exec -it api bun src/cli/create-admin.ts you@example.com "Your Name"
 ```
+
+All ports are bound to `127.0.0.1`. For a real deployment, put a TLS reverse proxy in front of the web app (port 3001), set `PUBLIC_URL` to its `https://` address, and remove the `api` and `postgres` port mappings.
 
 ## Database
 

@@ -19,17 +19,53 @@
       "skillPath": "skills/bun-runtime/SKILL.md",
       "computedHash": "73b3c91579ddd2f2dd7ebcf215774ea0de07823c1fe8de4b88b3225833bfa5cd"
     },
+    "docker-patterns": {
+      "source": "affaan-m/ecc",
+      "sourceType": "github",
+      "skillPath": "skills/docker-patterns/SKILL.md",
+      "computedHash": "af6deba271429bcb5198a7e56a4f71f948509e06037e6a3210d0ad5f516eeb29"
+    },
     "drizzle": {
       "source": "lobehub/lobehub",
       "sourceType": "github",
       "skillPath": ".agents/skills/drizzle/SKILL.md",
       "computedHash": "2f40fed877b7adcae6f510423ea20aece4afa3b1c5511b8636c333537c4f8186"
     },
+    "frontend-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skills/frontend-design/SKILL.md",
+      "computedHash": "89496d5dd00f4810205f351759594fc2742bf8eea85a2f2b2d1de59f4bd91576"
+    },
+    "hono": {
+      "source": "honojs/skills",
+      "sourceType": "github",
+      "skillPath": "skills/hono/SKILL.md",
+      "computedHash": "e3f141a41800df815000216a53510fe6f888629471c214706cc05adff27297fb"
+    },
+    "hono-jsx": {
+      "source": "honojs/skills",
+      "sourceType": "github",
+      "skillPath": "skills/hono-jsx/SKILL.md",
+      "computedHash": "368301225e777948e03e5a8097876c27a30fe65249217044bab54d013f5207d2"
+    },
+    "impeccable": {
+      "source": "pbakaus/impeccable",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/impeccable/SKILL.md",
+      "computedHash": "f7c4e03bef91154273d2dc3b62aff829cf4ab1b1f16e6b98c8c6a31be4405318"
+    },
     "mcp-builder": {
       "source": "anthropics/skills",
       "sourceType": "github",
       "skillPath": "skills/mcp-builder/SKILL.md",
       "computedHash": "826e46adf81e1372282e205c34e1a2ee876e72148007726e4a2512599d2fef7b"
+    },
+    "playwright-cli": {
+      "source": "microsoft/playwright-cli",
+      "sourceType": "github",
+      "skillPath": "skills/playwright-cli/SKILL.md",
+      "computedHash": "1e6cef0264b72fbf47618ccb82644b9a72934b2eeb35186842332928492a3cd2"
     },
     "postgresql-table-design": {
       "source": "wshobson/agents",
@@ -54,6 +90,18 @@
       "sourceType": "github",
       "skillPath": "svelte/skills/svelte5-best-practices/SKILL.md",
       "computedHash": "bfcbba3d355aede6f6be9720f195206d4dcaa7c152787ea00c06cb4a1ac44ba4"
+    },
+    "web-design-guidelines": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/web-design-guidelines/SKILL.md",
+      "computedHash": "f3bc47f890f42a44db1007ab390709ec368e4b8c089baee6b0007182236ac474"
+    },
+    "webapp-testing": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skills/webapp-testing/SKILL.md",
+      "computedHash": "ad5b1fc52807e9afa4635e59218a026b164dc58b6c3f41b0f7c644dcd6ccf572"
     }
   }
 }

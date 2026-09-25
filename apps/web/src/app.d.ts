@@ -13,9 +13,14 @@ declare global {
 				id: string;
 				expiresAt: string;
 			} | null;
+			/** False when the API could not be reached for the session lookup. */
+			apiAvailable: boolean;
+		}
+		interface PageData {
+			user: Locals['user'];
+			session: Locals['session'];
 		}
 		// interface Error {}
-		// interface PageData {}
 		// interface PageState {}
 		// interface Platform {}
 	}
