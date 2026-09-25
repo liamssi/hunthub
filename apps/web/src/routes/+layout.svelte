@@ -2,13 +2,13 @@
 	import './layout.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import { ModeWatcher } from 'mode-watcher';
-	import { page } from '$app/state';
+	import { Separator } from '$lib/components/ui/separator/index.js';
+	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
 	import { Toaster } from '$lib/components/ui/sonner/index.js';
-	import UserMenu from '$lib/components/user-menu.svelte';
+	import AppBreadcrumb from '$lib/components/app-breadcrumb.svelte';
+	import AppSidebar from '$lib/components/app-sidebar.svelte';
 
 	let { data, children } = $props();
-
-	const navLinks = $derived(data.user?.role === 'admin' ? [{ href: '/admin/users', label: 'Users' }] : []);
 </script>
 
 <svelte:head><link rel="icon" href={favicon} /></svelte:head>
@@ -16,25 +16,23 @@
 <Toaster richColors />
 
 {#if data.user}
-	<header class="border-b">
-		<div class="mx-auto flex h-14 max-w-6xl items-center gap-6 px-4">
-			<a href="/" class="font-semibold">HuntHub</a>
-			<nav class="flex gap-4 text-sm">
-				{#each navLinks as link (link.href)}
-					{@const current = page.url.pathname.startsWith(link.href)}
-					<a
-						href={link.href}
-						aria-current={current ? 'page' : undefined}
-						class={current ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}>{link.label}</a
-					>
-				{/each}
-			</nav>
-			<div class="ml-auto"><UserMenu user={data.user} /></div>
-		</div>
-	</header>
-	<main class="mx-auto max-w-6xl px-4 py-8">
-		{@render children()}
-	</main>
+	<Sidebar.Provider open={data.sidebarOpen}>
+		<AppSidebar user={data.user} />
+		<Sidebar.Inset>
+			<header
+				class="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
+			>
+				<div class="flex items-center gap-2 px-4">
+					<Sidebar.Trigger class="-ms-1" />
+					<Separator orientation="vertical" class="me-2 data-[orientation=vertical]:h-4" />
+					<AppBreadcrumb />
+				</div>
+			</header>
+			<main class="flex flex-1 flex-col gap-4 p-4 pt-0">
+				{@render children()}
+			</main>
+		</Sidebar.Inset>
+	</Sidebar.Provider>
 {:else}
 	{@render children()}
 {/if}
