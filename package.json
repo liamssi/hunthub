@@ -1,0 +1,12 @@
+{
+	"name": "hunthub",
+	"private": true,
+	"workspaces": ["apps/*"],
+	"scripts": {
+		"db:up": "docker compose up -d postgres",
+		"dev": "bun run --filter './apps/*' dev",
+		"dev:api": "bun run --filter api dev",
+		"dev:web": "bun run --filter web dev",
+		"check": "bun run --filter './apps/*' check"
+	}
+}
