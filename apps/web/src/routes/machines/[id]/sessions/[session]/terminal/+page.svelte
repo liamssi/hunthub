@@ -20,6 +20,9 @@
 	import { useSidebar } from '$lib/components/ui/sidebar/context.svelte.js';
 	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
 	import { subscribeLive } from '$lib/live';
+	import { appearance, loadAppearance, themeColors, workspaceVars } from '$lib/terminal-appearance.svelte';
+	import AppearanceDialog from '$lib/components/terminal/appearance-dialog.svelte';
+	import PaletteIcon from '@lucide/svelte/icons/palette';
 
 	let { data } = $props();
 
@@ -57,6 +60,17 @@
 		};
 	});
 
+	// The page takes the terminal theme's colors (menus and dialogs included) while open.
+	onMount(() => loadAppearance());
+	$effect(() => {
+		const html = document.documentElement;
+		const vars = workspaceVars(appearance.theme);
+		for (const [k, v] of Object.entries(vars)) html.style.setProperty(k, v);
+		return () => {
+			for (const k of Object.keys(vars)) html.style.removeProperty(k);
+		};
+	});
+
 	// Per-browser conveniences: the last view and transport.
 	const load = (key: string) => {
 		try {
@@ -90,6 +104,8 @@
 		return () => document.removeEventListener('fullscreenchange', sync);
 	});
 	const toggleFullscreen = () => (fullscreen ? document.exitFullscreen() : root?.requestFullscreen())?.catch(() => {});
+
+	let appearanceOpen = $state(false);
 
 	let mode = $state<TerminalMode>('control');
 	let attempt = $state(0);
@@ -163,6 +179,7 @@
 			</DropdownMenu.Group>
 			<DropdownMenu.Separator />
 			<DropdownMenu.Group>
+				<DropdownMenu.Item onSelect={() => (appearanceOpen = true)}><PaletteIcon />Terminal appearance…</DropdownMenu.Item>
 				<DropdownMenu.Item>
 					{#snippet child({ props })}<a {...props} href={sessionHref}>Manage session</a>{/snippet}
 				</DropdownMenu.Item>
@@ -190,7 +207,7 @@
 		</header>
 		<div class="min-h-0 flex-1">
 			{#if view === 'herdr'}
-				<div class="size-full bg-[#0a0a0a]">
+				<div class="size-full" style:background-color={themeColors(appearance.theme).background}>
 					{#key `${mode}:${attempt}`}
 						<TerminalView machineId={data.machine.id} session={data.sessionName} view="session" {mode} transport="cli" bind:state={termState} />
 					{/key}
@@ -203,3 +220,5 @@
 		</div>
 	{/if}
 </div>
+
+<AppearanceDialog bind:open={appearanceOpen} />

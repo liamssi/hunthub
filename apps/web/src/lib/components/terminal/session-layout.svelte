@@ -16,6 +16,8 @@
 	import Columns2Icon from '@lucide/svelte/icons/columns-2';
 	import EyeIcon from '@lucide/svelte/icons/eye';
 	import KeyboardIcon from '@lucide/svelte/icons/keyboard';
+	import ListTreeIcon from '@lucide/svelte/icons/list-tree';
+	import Rows2Icon from '@lucide/svelte/icons/rows-2';
 	import FolderIcon from '@lucide/svelte/icons/folder';
 	import GitBranchIcon from '@lucide/svelte/icons/git-branch';
 	import Maximize2Icon from '@lucide/svelte/icons/maximize-2';
@@ -34,7 +36,9 @@
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
 	import { Kbd } from '$lib/components/ui/kbd/index.js';
+	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
 	import { consoleCall, consoleRequest } from '$lib/console';
+	import { appearance, themeColors, workspaceVars } from '$lib/terminal-appearance.svelte';
 	import { cn } from '$lib/utils.js';
 	import TerminalView, { type TerminalMode, type TerminalState, type TerminalTransport } from './terminal-view.svelte';
 
@@ -55,6 +59,13 @@
 		/** Right end of the tab bar (view switch, menus). */
 		controls?: Snippet;
 	} = $props();
+
+	// The workspace takes the terminal theme's colors (set inline: the .dark class would override inherited ones).
+	const themeStyle = $derived(
+		Object.entries(workspaceVars(appearance.theme))
+			.map(([k, v]) => `${k}: ${v}`)
+			.join('; ')
+	);
 
 	/** How many tabs stay connected in the background. */
 	const KEEP_ALIVE = 6;
@@ -85,7 +96,54 @@
 
 	// --- Sidebar ----------------------------------------------------------------
 	const SIDEBAR_KEY = 'hunthub.workspace.sidebar';
+	const SIDEBAR_WIDTH_KEY = 'hunthub.workspace.sidebarWidth';
+	const SIDEBAR_LIST_KEY = 'hunthub.workspace.sidebarList';
+	const DEFAULT_WIDTH = 240;
+	const clampWidth = (w: number) => Math.min(480, Math.max(180, Math.round(w)));
 	let sidebarOpen = $state(true);
+	let sidebarWidth = $state(DEFAULT_WIDTH);
+	/** "separate": spaces and agents in two lists, as in Herdr; "nested": each space's agents under it. */
+	let sidebarList = $state<'separate' | 'nested'>('separate');
+	$effect(() => {
+		try {
+			sidebarWidth = clampWidth(Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || DEFAULT_WIDTH);
+			sidebarList = localStorage.getItem(SIDEBAR_LIST_KEY) === 'nested' ? 'nested' : 'separate';
+		} catch {
+			// Only a convenience.
+		}
+	});
+	const remember = (key: string, value: string) => {
+		try {
+			localStorage.setItem(key, value);
+		} catch {
+			// Only a convenience.
+		}
+	};
+	function setSidebarWidth(w: number) {
+		sidebarWidth = clampWidth(w);
+		remember(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
+	}
+	function startSidebarResize(e: PointerEvent) {
+		const el = e.currentTarget as HTMLElement;
+		el.setPointerCapture(e.pointerId);
+		const startX = e.clientX;
+		const startWidth = sidebarWidth;
+		const move = (ev: PointerEvent) => (sidebarWidth = clampWidth(startWidth + ev.clientX - startX));
+		const end = () => {
+			el.removeEventListener('pointermove', move);
+			el.removeEventListener('pointerup', end);
+			el.removeEventListener('pointercancel', end);
+			setSidebarWidth(sidebarWidth);
+		};
+		el.addEventListener('pointermove', move);
+		el.addEventListener('pointerup', end);
+		el.addEventListener('pointercancel', end);
+	}
+	function sidebarResizeKey(e: KeyboardEvent) {
+		if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+		e.preventDefault();
+		setSidebarWidth(sidebarWidth + (e.key === 'ArrowRight' ? 16 : -16));
+	}
 	$effect(() => {
 		try {
 			sidebarOpen = localStorage.getItem(SIDEBAR_KEY) !== 'closed';
@@ -104,9 +162,8 @@
 
 	/** Agents that need attention first. */
 	const order: Record<AgentStatus, number> = { blocked: 0, done: 1, working: 2, idle: 3, unknown: 4 };
-	const agents = $derived(
-		session.workspaces.flatMap((w) => w.agents).sort((a, b) => order[a.status] - order[b.status] || a.name.localeCompare(b.name))
-	);
+	const byAttention = (a: AgentView, b: AgentView) => order[a.status] - order[b.status] || a.name.localeCompare(b.name);
+	const agents = $derived(session.workspaces.flatMap((w) => w.agents).sort(byAttention));
 
 	// --- Panes ------------------------------------------------------------------
 	let activePane = $state<Record<string, string>>({});
@@ -481,10 +538,43 @@
 	{/each}
 {/snippet}
 
+{#snippet agentRow(a: AgentView, showSpace: boolean)}
+	<button
+		type="button"
+		class="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+		onclick={() => jumpToAgent(a)}
+		title="Go to {a.name}"
+	>
+		<StatusBadge status={a.status} compact />
+		<span class="flex min-w-0 flex-col">
+			<span class="truncate font-medium">{a.name}</span>
+			{#if showSpace}<span class="truncate text-xs text-muted-foreground">{a.workspaceLabel}</span>{/if}
+		</span>
+	</button>
+{/snippet}
+
 <!-- The workspace is always dark, like the terminals it holds. -->
-<div class="dark flex size-full min-h-0 bg-background text-foreground">
+<div class="dark flex size-full min-h-0 bg-background text-foreground" style={themeStyle}>
 	{#if sidebarOpen}
-		<aside class="flex w-60 shrink-0 flex-col border-e bg-sidebar text-sidebar-foreground">
+		<aside class="relative flex shrink-0 flex-col border-e bg-sidebar text-sidebar-foreground" style:width="{sidebarWidth}px">
+			<!-- Drag (or arrow keys) to resize; double-click for the default width. -->
+			<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+			<div
+				role="separator"
+				tabindex="0"
+				aria-orientation="vertical"
+				aria-label="Resize sidebar"
+				aria-valuemin={180}
+				aria-valuemax={480}
+				aria-valuenow={sidebarWidth}
+				title="Drag to resize, double-click to reset"
+				class="group/edge absolute inset-y-0 -end-1 z-20 flex w-2 cursor-col-resize justify-center outline-none"
+				onpointerdown={startSidebarResize}
+				ondblclick={() => setSidebarWidth(DEFAULT_WIDTH)}
+				onkeydown={sidebarResizeKey}
+			>
+				<span class="h-full w-px bg-foreground/40 opacity-0 transition-opacity group-hover/edge:opacity-100 group-focus-visible/edge:opacity-100"></span>
+			</div>
 			{#if header}
 				<div class="flex h-10 shrink-0 items-center gap-2 border-b px-2">{@render header()}</div>
 			{/if}
@@ -493,6 +583,27 @@
 				<section class="flex flex-col gap-0.5 p-2" aria-labelledby="spaces-heading">
 					<div class="flex h-7 items-center justify-between px-2">
 						<h2 id="spaces-heading" class="text-xs font-medium text-muted-foreground">Spaces</h2>
+						<ToggleGroup.Root
+							type="single"
+							size="sm"
+							class="ms-auto me-1"
+							aria-label="Sidebar layout"
+							bind:value={
+								() => sidebarList,
+								(v) => {
+									if (v !== 'separate' && v !== 'nested') return;
+									sidebarList = v;
+									remember(SIDEBAR_LIST_KEY, v);
+								}
+							}
+						>
+							<ToggleGroup.Item value="separate" class="size-6 min-w-6 p-0" aria-label="Spaces and agents in separate lists" title="Separate lists (like Herdr)">
+								<Rows2Icon />
+							</ToggleGroup.Item>
+							<ToggleGroup.Item value="nested" class="size-6 min-w-6 p-0" aria-label="Agents under their space" title="Agents under their space">
+								<ListTreeIcon />
+							</ToggleGroup.Item>
+						</ToggleGroup.Root>
 						<Button size="icon-sm" variant="ghost" class="size-6" aria-label="New space" title="New space ({keys('N')})" onclick={newSpace}>
 							<PlusIcon />
 						</Button>
@@ -546,33 +657,31 @@
 							</ContextMenu.Trigger>
 							<ContextMenu.Content class="w-52">{@render contextItems(spaceActions(w))}</ContextMenu.Content>
 						</ContextMenu.Root>
+						{#if sidebarList === 'nested' && w.agents.length}
+							<div class="ms-4 mb-1 flex flex-col gap-0.5 border-s ps-1.5">
+								{#each [...w.agents].sort(byAttention) as a (a.paneId)}
+									{@render agentRow(a, false)}
+								{/each}
+							</div>
+						{/if}
 					{:else}
 						<p class="px-2 py-1 text-sm text-muted-foreground">No spaces yet.</p>
 					{/each}
 				</section>
 
-				<section class="flex flex-col gap-0.5 border-t p-2" aria-labelledby="agents-heading">
-					<div class="flex h-7 items-center px-2">
-						<h2 id="agents-heading" class="text-xs font-medium text-muted-foreground">Agents</h2>
-						{#if agents.length}<span class="ms-auto text-xs text-muted-foreground tabular-nums">{agents.length}</span>{/if}
-					</div>
-					{#each agents as a (a.paneId)}
-						<button
-							type="button"
-							class="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-							onclick={() => jumpToAgent(a)}
-							title="Go to {a.name}"
-						>
-							<StatusBadge status={a.status} compact />
-							<span class="flex min-w-0 flex-col">
-								<span class="truncate font-medium">{a.name}</span>
-								<span class="truncate text-xs text-muted-foreground">{a.workspaceLabel}</span>
-							</span>
-						</button>
-					{:else}
-						<p class="px-2 py-1 text-sm text-muted-foreground">No agents running.</p>
-					{/each}
-				</section>
+				{#if sidebarList === 'separate'}
+					<section class="flex flex-col gap-0.5 border-t p-2" aria-labelledby="agents-heading">
+						<div class="flex h-7 items-center px-2">
+							<h2 id="agents-heading" class="text-xs font-medium text-muted-foreground">Agents</h2>
+							{#if agents.length}<span class="ms-auto text-xs text-muted-foreground tabular-nums">{agents.length}</span>{/if}
+						</div>
+						{#each agents as a (a.paneId)}
+							{@render agentRow(a, true)}
+						{:else}
+							<p class="px-2 py-1 text-sm text-muted-foreground">No agents running.</p>
+						{/each}
+					</section>
+				{/if}
 			</div>
 
 			<div class="flex shrink-0 items-center justify-between border-t p-1.5">
@@ -610,7 +719,7 @@
 									aria-selected={current}
 									class={cn(
 										'relative flex shrink-0 items-center gap-2 px-3 text-sm text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:text-foreground',
-										current && 'text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-sidebar-primary'
+										current && 'text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-foreground'
 									)}
 									onclick={() => space && selectTab(space.id, t.id)}
 									ondblclick={() => renameTab(t)}
@@ -644,7 +753,7 @@
 			{/if}
 		</div>
 
-		<div class="relative min-h-0 flex-1 bg-sidebar">
+		<div class="relative min-h-0 flex-1 bg-(--workspace-stage,var(--sidebar))">
 			{#each alive as t (t.id)}
 				{@const current = t.id === tab?.id}
 				{@const max = maximized[t.id] ?? null}
@@ -671,9 +780,10 @@
 						>
 							<div
 								class={cn(
-									'group flex size-full min-h-0 flex-col overflow-hidden rounded-lg border bg-background shadow-sm transition-colors',
-									active ? 'border-sidebar-primary/80' : 'hover:border-foreground/20'
+									'group flex size-full min-h-0 flex-col overflow-hidden rounded-lg border shadow-sm transition-colors',
+									active ? 'border-foreground/45' : 'hover:border-foreground/20'
 								)}
+								style:background-color={themeColors(appearance.theme).background}
 							>
 								<ContextMenu.Root>
 									<ContextMenu.Trigger>
@@ -793,7 +903,7 @@
 							>
 								<span
 									class={cn(
-										'rounded-full bg-sidebar-primary opacity-0 transition-opacity group-hover/divider:opacity-80 group-focus-visible/divider:opacity-100',
+										'rounded-full bg-foreground/50 opacity-0 transition-opacity group-hover/divider:opacity-80 group-focus-visible/divider:opacity-100',
 										sp.direction === 'right' ? 'h-full w-0.5' : 'h-0.5 w-full',
 										dragging && 'opacity-100'
 									)}

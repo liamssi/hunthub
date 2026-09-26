@@ -11,6 +11,7 @@
 	import '@xterm/xterm/css/xterm.css';
 	import type { Terminal } from '@xterm/xterm';
 	import { untrack } from 'svelte';
+	import { appearance, fontFamily, loadAppearance, themeColors } from '$lib/terminal-appearance.svelte';
 
 	let {
 		machineId,
@@ -51,12 +52,59 @@
 		return btoa(s);
 	}
 
+	/**
+	 * Herdr paints "default background" cells with the background some other
+	 * terminal reported to it (the host theme), so they would ignore our theme.
+	 * The first full frame tells us that color: it is the background almost
+	 * every cell uses. From then on it is written as the default background.
+	 */
+	function learnHostBackground(text: string): string | null {
+		const counts = new Map<string, number>();
+		let total = 0;
+		for (const m of text.matchAll(/\x1b\[([0-9;]*)m/g)) {
+			for (const bg of m[1]!.matchAll(/(?:^|;)48;2;(\d+;\d+;\d+)/g)) {
+				counts.set(bg[1]!, (counts.get(bg[1]!) ?? 0) + 1);
+				total++;
+			}
+		}
+		const [color, n] = [...counts].sort((a, b) => b[1] - a[1])[0] ?? [null, 0];
+		return color && n >= 3 && n / total >= 0.6 ? color : null;
+	}
+
 	function fromBase64(b64: string): Uint8Array {
 		const s = atob(b64);
 		const out = new Uint8Array(s.length);
 		for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
 		return out;
 	}
+
+	/** The live terminal, for appearance changes; set while connected. */
+	let live: { term: Terminal; refit: () => void } | null = null;
+
+	/** Waits for the chosen font, so xterm measures its cells with the real glyphs. */
+	async function fontReady() {
+		try {
+			await document.fonts.load(`${appearance.size}px ${fontFamily(appearance.font)}`);
+		} catch {
+			// Falls back to whatever is available.
+		}
+	}
+
+	// Font, size and theme apply live to an open terminal; the pane size follows.
+	$effect(() => {
+		const font = fontFamily(appearance.font);
+		const size = appearance.size;
+		const colors = themeColors(appearance.theme);
+		void fontReady().then(() => {
+			if (!live) return;
+			live.term.options.fontFamily = font;
+			live.term.options.fontSize = size;
+			live.term.options.theme = colors;
+			// Rows already drawn keep their old colors until repainted.
+			live.term.refresh(0, live.term.rows - 1);
+			live.refit();
+		});
+	});
 
 	// One connection per set of connection parameters. Everything else (callbacks,
 	// this terminal's own state) is read untracked, so updates never reconnect.
@@ -91,16 +139,17 @@
 		setState({ phase: 'connecting' });
 
 		void (async () => {
-			const [{ Terminal }, { FitAddon }] = await Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')]);
+			loadAppearance();
+			const [{ Terminal }, { FitAddon }] = await Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit'), fontReady()]);
 			if (disposed) return;
 			term = new Terminal({
 				cursorBlink: mode === 'control',
 				disableStdin: mode !== 'control',
-				fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-				fontSize: 13,
+				fontFamily: fontFamily(appearance.font),
+				fontSize: appearance.size,
+				lineHeight: 1.1,
 				scrollback: 0,
-				// Matches the dark theme's --background, so a pane and its terminal read as one surface.
-				theme: { background: '#0a0a0a', foreground: '#e5e5e5', cursor: '#e5e5e5', selectionBackground: '#3b82f666' }
+				theme: themeColors(appearance.theme)
 			});
 			const fit = new FitAddon();
 			term.loadAddon(fit);
@@ -108,6 +157,10 @@
 			fit.fit();
 
 			const send = (msg: object) => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
+			const decoder = new TextDecoder();
+			const encoder = new TextEncoder();
+			let hostBackground: string | null | undefined;
+			let hostPattern: RegExp | null = null;
 			const params = new URLSearchParams({
 				session,
 				view,
@@ -131,7 +184,14 @@
 				}
 				if (msg.type === 'frame' && msg.bytes) {
 					if (state.phase !== 'live') setState({ phase: 'live' });
-					term?.write(fromBase64(msg.bytes));
+					let bytes = fromBase64(msg.bytes);
+					if (hostBackground === undefined && (msg as { full?: boolean }).full) {
+						hostBackground = learnHostBackground(new TextDecoder().decode(bytes));
+						if (hostBackground) hostPattern = new RegExp(`(\\x1b\\[(?:[0-9;]*;)?)48;2;${hostBackground}(?=[;m])`, 'g');
+					}
+					// Streaming decode keeps a character split across two frames intact.
+					if (hostPattern) bytes = encoder.encode(decoder.decode(bytes, { stream: true }).replace(hostPattern, (_, prefix: string) => `${prefix}49`));
+					term?.write(bytes);
 				} else if (msg.type === 'closed') {
 					setState({ phase: 'closed', reason: msg.reason });
 				}
@@ -145,7 +205,6 @@
 			};
 
 			if (mode === 'control') {
-				const encoder = new TextEncoder();
 				const sendInput = (bytes: Uint8Array) => {
 					for (let i = 0; i < bytes.length; i += INPUT_CHUNK) send({ type: 'input', bytes: toBase64(bytes.subarray(i, i + INPUT_CHUNK)) });
 				};
@@ -162,20 +221,23 @@
 				term.focus();
 			}
 
+			const refit = () => {
+				if (!term) return;
+				const { cols, rows } = term;
+				fit.fit();
+				if (term.cols !== cols || term.rows !== rows) send({ type: 'resize', cols: Math.max(term.cols, 10), rows: Math.max(term.rows, 4) });
+			};
+			live = { term, refit };
 			observer = new ResizeObserver(() => {
 				clearTimeout(resizeTimer);
-				resizeTimer = setTimeout(() => {
-					if (!term) return;
-					const { cols, rows } = term;
-					fit.fit();
-					if (term.cols !== cols || term.rows !== rows) send({ type: 'resize', cols: Math.max(term.cols, 10), rows: Math.max(term.rows, 4) });
-				}, 100);
+				resizeTimer = setTimeout(refit, 100);
 			});
 			observer.observe(container);
 		})();
 
 		return () => {
 			disposed = true;
+			live = null;
 			clearTimeout(resizeTimer);
 			observer?.disconnect();
 			ws?.close();
@@ -184,4 +246,9 @@
 	}
 </script>
 
-<div bind:this={container} data-phase={state.phase} class="size-full overflow-hidden bg-[#0a0a0a] ps-1.5 pt-1"></div>
+<div
+	bind:this={container}
+	data-phase={state.phase}
+	class="size-full overflow-hidden ps-1.5 pt-1"
+	style:background-color={themeColors(appearance.theme).background}
+></div>
