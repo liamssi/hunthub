@@ -37,7 +37,7 @@
 		state?: TerminalState;
 		/** For parents that track many terminals (binding would need a slot per terminal up front). */
 		onstatechange?: (state: TerminalState) => void;
-		/** When set, scrolling up calls it instead of scrolling the pane (e.g. to show history above a pinned prompt). */
+		/** Scrolling up while only watching (which can't scroll the pane) calls it, e.g. to show history. */
 		onscrollup?: () => void;
 		/** The terminal's width in columns (what the pane's lines are drawn at). */
 		oncolschange?: (cols: number) => void;
@@ -283,15 +283,25 @@
 				term.onBinary((data) => sendInput(Uint8Array.from(data, (c) => c.charCodeAt(0) & 0xff)));
 				term.focus();
 			}
-			// Scrolling up opens the pane's history (kept by HuntHub, so it never moves the
-			// pane's shared view on the machine). Shift+wheel goes to the pane itself, for
-			// programs that use the wheel (vim, htop). Herdr's own UI takes the wheel as mouse input.
+			// The wheel scrolls the pane in Herdr itself, as Herdr's own UI does: its full
+			// scrollback, always current (programs that take the mouse get the wheel instead).
+			// Watching can't scroll Herdr, so there scrolling up opens the history HuntHub keeps.
 			if (view === 'pane') {
+				let pending = 0; // Wheel distance not yet sent, in lines.
 				term.attachCustomWheelEventHandler((e) => {
 					const delta = e.deltaY || e.deltaX;
-					if (e.shiftKey || !onscrollup) {
-						if (delta && mode === 'control') send({ type: 'scroll', direction: delta < 0 ? 'up' : 'down', lines: 3 });
-					} else if (delta < 0) onscrollup();
+					if (mode !== 'control') {
+						if (delta < 0) onscrollup?.();
+						return false;
+					}
+					// Pixels (trackpads) become lines by the row height; line and page modes count as given.
+					const rowHeight = (container.querySelector('.xterm-screen')?.clientHeight ?? 0) / t.rows || 16;
+					pending += e.deltaMode === 1 ? delta : e.deltaMode === 2 ? delta * t.rows : delta / rowHeight;
+					const lines = Math.trunc(pending);
+					if (lines) {
+						pending -= lines;
+						send({ type: 'scroll', direction: lines < 0 ? 'up' : 'down', lines: Math.min(Math.abs(lines), 500) });
+					}
 					return false;
 				});
 			}
