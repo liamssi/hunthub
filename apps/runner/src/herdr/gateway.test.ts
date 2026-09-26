@@ -93,7 +93,7 @@ describe.skipIf(!herdrAvailable)('herdr gateway', () => {
 			const results = sent.filter((m): m is Extract<RunnerMessage, { type: 'herdr.result' }> => m.type === 'herdr.result');
 			expect(results.find((r) => r.id === '1')).toMatchObject({ ok: false, error: { code: 'not_allowed' } });
 			expect(results.find((r) => r.id === '2')).toMatchObject({ ok: true });
-			expect(results.find((r) => r.id === '3')).toMatchObject({ ok: false, error: { code: 'unknown_session' } });
+			expect(results.find((r) => r.id === '3')).toMatchObject({ ok: false, error: { code: 'invalid_name' } });
 		} finally {
 			gateway.stop();
 		}

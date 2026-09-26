@@ -1,11 +1,16 @@
 // The runner's Herdr gateway: watches every Herdr session on this machine and
 // forwards snapshots to the hub, and executes allowlisted Herdr calls the hub
-// sends. It doesn't interpret Herdr data; the hub does.
+// sends. It doesn't interpret Herdr data; the hub does. Herdr on this machine
+// is the source of truth: sessions created, changed or deleted directly here
+// are picked up by the folder watch, periodic discovery and subscriptions.
+import { type FSWatcher, watch } from 'node:fs';
+import { join } from 'node:path';
 import type { HerdrSessionReport, RunnerMessage } from '@hunthub/shared/runner-protocol';
-import { discoverSessions, HerdrError, request, socketPathFor, subscribe } from './client';
+import { discoverSessions, HerdrError, herdrDir, request, socketPathFor, subscribe } from './client';
+import { deleteSession, startSession, stopSession, validateSessionName } from './sessions';
 
-/** Herdr methods the hub may call. M2 is read-only. */
-export const ALLOWED_METHODS = new Set([
+/** Herdr methods that only read. */
+const READ_METHODS = [
 	'ping',
 	'session.snapshot',
 	'workspace.list',
@@ -16,8 +21,38 @@ export const ALLOWED_METHODS = new Set([
 	'agent.list',
 	'agent.get',
 	'agent.read',
-	'agent.explain'
-]);
+	'agent.explain',
+	'worktree.list'
+];
+
+/** Herdr methods that change a session's layout (the console, M3a). */
+const MANAGE_METHODS = [
+	'workspace.create',
+	'workspace.rename',
+	'workspace.close',
+	'tab.create',
+	'tab.rename',
+	'tab.close',
+	'pane.split',
+	'pane.rename',
+	'pane.close',
+	'worktree.create',
+	'worktree.open',
+	'worktree.remove'
+];
+
+/** Session lifecycle, done by the runner itself (not Herdr socket calls). */
+export const SESSION_START = 'hunthub.session.start';
+export const SESSION_STOP = 'hunthub.session.stop';
+export const SESSION_DELETE = 'hunthub.session.delete';
+const LIFECYCLE_METHODS = [SESSION_START, SESSION_STOP, SESSION_DELETE];
+
+/** Everything the hub may ask for. For now all users may do everything; tiers come later. */
+export const ALLOWED_METHODS = new Set([...READ_METHODS, ...MANAGE_METHODS, ...LIFECYCLE_METHODS]);
+const MUTATING = new Set([...MANAGE_METHODS, ...LIFECYCLE_METHODS]);
+
+/** Creating things never steals focus from whoever is using the session locally. */
+const CREATE_METHODS = new Set(['workspace.create', 'tab.create', 'pane.split', 'worktree.create', 'worktree.open']);
 
 // Structure changes arrive as events; agent state changes don't, so snapshots
 // are also checked on a short timer.
@@ -209,6 +244,10 @@ class SessionWatcher {
 export class HerdrGateway {
 	private watchers = new Map<string, SessionWatcher>();
 	private discoverTimer: ReturnType<typeof setInterval> | null = null;
+	private discoverSoon: ReturnType<typeof setTimeout> | null = null;
+	private folderWatches: FSWatcher[] = [];
+	/** Mutations run one at a time per session, in order. */
+	private queues = new Map<string, Promise<unknown>>();
 
 	constructor(
 		private readonly send: Send,
@@ -218,12 +257,37 @@ export class HerdrGateway {
 	start() {
 		this.discover();
 		this.discoverTimer = setInterval(() => this.discover(), DISCOVER_MS);
+		this.watchFolders();
 	}
 
 	stop() {
 		if (this.discoverTimer) clearInterval(this.discoverTimer);
+		if (this.discoverSoon) clearTimeout(this.discoverSoon);
+		for (const w of this.folderWatches) w.close();
+		this.folderWatches = [];
 		for (const w of this.watchers.values()) w.stop();
 		this.watchers.clear();
+	}
+
+	/** Sessions appearing or disappearing on disk trigger discovery right away. */
+	private watchFolders() {
+		for (const dir of [herdrDir(), join(herdrDir(), 'sessions')]) {
+			try {
+				const w = watch(dir, () => this.scheduleDiscover());
+				w.on('error', () => {});
+				this.folderWatches.push(w);
+			} catch {
+				// The folder may not exist yet; periodic discovery still covers it.
+			}
+		}
+	}
+
+	private scheduleDiscover() {
+		if (this.discoverSoon) return;
+		this.discoverSoon = setTimeout(() => {
+			this.discoverSoon = null;
+			this.discover();
+		}, 200);
 	}
 
 	private discover() {
@@ -242,26 +306,65 @@ export class HerdrGateway {
 		}
 	}
 
-	/** Runs an allowlisted Herdr call for the hub and replies with the result. */
+	/** Runs an allowlisted call for the hub and replies with the result. */
 	async call(id: string, session: string, method: string, params: Record<string, unknown>) {
+		const reply = (ok: boolean, body: { result?: unknown; error?: { code: string; message: string } }) =>
+			this.send({ type: 'herdr.result', id, ok, ...body });
+
 		if (!ALLOWED_METHODS.has(method)) {
-			this.send({ type: 'herdr.result', id, ok: false, error: { code: 'not_allowed', message: `${method} is not allowed on this machine` } });
-			return;
+			return reply(false, { error: { code: 'not_allowed', message: `${method} is not allowed on this machine` } });
 		}
-		// Only sessions found on disk; the name becomes part of a socket path.
-		if (!this.watchers.has(session)) {
-			this.send({ type: 'herdr.result', id, ok: false, error: { code: 'unknown_session', message: `No Herdr session named ${session}` } });
-			return;
+		// The session name becomes part of a socket path. Starting may name a new
+		// session; everything else must target one that exists on disk.
+		const invalid = validateSessionName(session);
+		if (invalid) return reply(false, { error: { code: 'invalid_name', message: invalid } });
+		if (method !== SESSION_START && !this.watchers.has(session)) {
+			return reply(false, { error: { code: 'unknown_session', message: `No Herdr session named ${session}` } });
 		}
+
+		const run = () => this.execute(session, method, params);
 		try {
-			const result = await request(socketPathFor(session), method, params);
-			this.send({ type: 'herdr.result', id, ok: true, result });
+			const result = MUTATING.has(method) ? await this.enqueue(session, run) : await run();
+			reply(true, { result });
 		} catch (err) {
 			const error =
 				err instanceof HerdrError
 					? { code: err.code, message: err.message }
 					: { code: 'unavailable', message: err instanceof Error ? err.message : String(err) };
-			this.send({ type: 'herdr.result', id, ok: false, error });
+			reply(false, { error });
+		}
+	}
+
+	private enqueue<T>(session: string, task: () => Promise<T>): Promise<T> {
+		const previous = this.queues.get(session) ?? Promise.resolve();
+		const next = previous.catch(() => {}).then(task);
+		this.queues.set(session, next);
+		const cleanup = () => {
+			if (this.queues.get(session) === next) this.queues.delete(session);
+		};
+		// The caller handles the result; this only clears the queue entry.
+		next.then(cleanup, cleanup);
+		return next;
+	}
+
+	private async execute(session: string, method: string, params: Record<string, unknown>): Promise<unknown> {
+		switch (method) {
+			case SESSION_START: {
+				const result = await startSession(session);
+				this.discover();
+				return result;
+			}
+			case SESSION_STOP:
+				await stopSession(session);
+				return { stopped: true };
+			case SESSION_DELETE:
+				await deleteSession(session);
+				this.discover();
+				return { deleted: true };
+			default: {
+				const finalParams = CREATE_METHODS.has(method) ? { ...params, focus: false } : params;
+				return request(socketPathFor(session), method, finalParams);
+			}
 		}
 	}
 }

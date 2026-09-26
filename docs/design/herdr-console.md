@@ -74,6 +74,12 @@ Every mutation through the hub is recorded: who did it, which machine, session a
 5. **M3d, administration:** policy UI per machine, integrations view and install.
 
 ## Decisions (2026-09-26)
+- **The machine and its Herdr are the source of truth.** Sessions, workspaces or panes created, changed or deleted directly on a machine (by the user, Hermes or anything else) must show up correctly in the hub.
+  - The hub never keeps its own list of sessions or layout: it only shows what runners report, and after an action it waits for the machine's report instead of guessing.
+  - The runner watches the Herdr folder for new or removed sessions (a filesystem watch plus a periodic scan).
+  - The audit log records actions, never state.
+- **Terminals: build both options**, the CLI observe/control approach and Herdr's native endpoint protocol (borrowing Roamgate's MIT code), selectable per terminal, so they can be compared in real use. One may be dropped later.
+- Borrow from Roamgate (MIT, keep the notice) instead of re-implementing where it fits.
 - **Keep it simple for now:** every signed-in user (admins and members) can do everything in the console. Roles and permissions come later, once the full hub is built.
 - **Policy tiers:** not built yet. The runner allows the full console method set by default. The tier design above stays for later (M3d or the roles work).
 - **Deleting sessions from the hub:** allowed for everyone, with a confirmation dialog, following Herdr's rules (stopped only, never `default`).
