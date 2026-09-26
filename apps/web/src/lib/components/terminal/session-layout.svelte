@@ -1021,29 +1021,45 @@
 					<ContextMenu.Root>
 						<ContextMenu.Trigger>
 							{#snippet child({ props })}
-								<button
+								<!-- Like a browser tab: the close button shows on hover and on the selected tab. -->
+								<div
 									{...props}
-									type="button"
-									role="tab"
-									aria-selected={current}
 									class={cn(
-										'relative flex shrink-0 items-center gap-2 px-3 text-sm text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:text-foreground',
+										'group/tt relative flex shrink-0 items-center text-sm text-muted-foreground transition-colors hover:text-foreground',
 										current && 'text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-foreground'
 									)}
-									onclick={() => space && selectTab(space.id, t.id)}
-									ondblclick={() => renameTab(t)}
-									title="Double-click to rename, right-click for more"
 								>
-									{#if agent}
-										<BotIcon class="size-4" aria-hidden="true" />
-									{:else if t.panes.length > 1}
-										<Columns2Icon class="size-4" aria-hidden="true" />
-									{:else}
-										<SquareTerminalIcon class="size-4" aria-hidden="true" />
-									{/if}
-									<span class="max-w-40 truncate">{agent ? agent.name : `Tab ${t.label}`}</span>
-									{#if agent}<StatusBadge status={agent.status} compact />{/if}
-								</button>
+									<button
+										type="button"
+										role="tab"
+										aria-selected={current}
+										class="flex h-full items-center gap-2 ps-3 pe-1 outline-none focus-visible:text-foreground"
+										onclick={() => space && selectTab(space.id, t.id)}
+										ondblclick={() => renameTab(t)}
+										onauxclick={(e) => e.button === 1 && closeTab(t)}
+										title="Double-click to rename, right-click for more"
+									>
+										{#if agent}
+											<BotIcon class="size-4" aria-hidden="true" />
+										{:else if t.panes.length > 1}
+											<Columns2Icon class="size-4" aria-hidden="true" />
+										{:else}
+											<SquareTerminalIcon class="size-4" aria-hidden="true" />
+										{/if}
+										<span class="max-w-40 truncate">{agent ? agent.name : `Tab ${t.label}`}</span>
+										{#if agent}<StatusBadge status={agent.status} compact />{/if}
+									</button>
+									<Button
+										size="icon-sm"
+										variant="ghost"
+										class={cn('me-1 size-5 opacity-0 group-hover/tt:opacity-100 focus-visible:opacity-100', current && 'opacity-100')}
+										aria-label="Close {agent ? agent.name : `tab ${t.label}`}"
+										title="Close tab"
+										onclick={() => closeTab(t)}
+									>
+										<XIcon />
+									</Button>
+								</div>
 							{/snippet}
 						</ContextMenu.Trigger>
 						<ContextMenu.Content class="w-52">{#if space}{@render contextItems(tabActions(space, t))}{/if}</ContextMenu.Content>
