@@ -1,5 +1,6 @@
 <script lang="ts">
 	import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
+	import GitBranchIcon from '@lucide/svelte/icons/git-branch';
 	import PlayIcon from '@lucide/svelte/icons/play';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import SquareIcon from '@lucide/svelte/icons/square';
@@ -63,6 +64,31 @@
 			],
 			submitLabel: 'Create',
 			onSubmit: (v) => call('New workspace', 'workspace.create', { ...(v.label && { label: v.label }), ...(v.cwd && { cwd: v.cwd }) })
+		});
+	const newWorktree = () =>
+		openForm({
+			title: 'New worktree',
+			description: 'Creates a git worktree on a new or existing branch and opens it as a workspace.',
+			fields: [
+				{ name: 'cwd', label: 'Repository folder', placeholder: '/home/you/project', required: true },
+				{ name: 'branch', label: 'Branch', placeholder: 'feature-x', required: true },
+				{ name: 'base', label: 'Start from', placeholder: 'main', description: 'For a new branch; empty: the current HEAD.' }
+			],
+			submitLabel: 'Create worktree',
+			onSubmit: (v) => call('New worktree', 'worktree.create', { cwd: v.cwd, branch: v.branch, ...(v.base && { base: v.base }) })
+		});
+	const removeWorktree = (id: string, label: string, force = false) =>
+		openConfirm({
+			title: force ? `Remove worktree ${label} anyway?` : `Remove worktree ${label}?`,
+			description: force
+				? 'Uncommitted changes in it are lost. The branch itself is kept.'
+				: 'Its workspace is closed and the checkout is removed from disk. The branch is kept.',
+			confirmLabel: force ? 'Remove anyway' : 'Remove worktree',
+			onConfirm: async () => {
+				const ok = await call('Remove worktree', 'worktree.remove', { workspace_id: id, ...(force && { force: true }) });
+				// A dirty checkout is refused; offer to force it.
+				if (!ok && !force) removeWorktree(id, label, true);
+			}
 		});
 	const renameWorkspace = (id: string, label: string) =>
 		openForm({
@@ -145,6 +171,7 @@
 		<div class="flex gap-2">
 			{#if running}
 				<Button onclick={newWorkspace}><PlusIcon data-icon="inline-start" />New workspace</Button>
+				<Button variant="outline" onclick={newWorktree}><GitBranchIcon data-icon="inline-start" />New worktree</Button>
 				<Button variant="outline" onclick={confirmStop}><SquareIcon data-icon="inline-start" />Stop</Button>
 			{:else}
 				<Button onclick={() => startSession(machine.id, name)}><PlayIcon data-icon="inline-start" />Start</Button>
@@ -174,6 +201,11 @@
 				<Card.Header class="flex flex-row items-center justify-between gap-2">
 					<div class="flex min-w-0 items-center gap-2">
 						<Card.Title class="truncate">{ws.label}</Card.Title>
+						{#if ws.worktree}
+							<Badge variant="outline" class="gap-1" title={ws.worktree.checkoutPath}>
+								<GitBranchIcon />{ws.worktree.linked ? `worktree of ${ws.worktree.repoName}` : ws.worktree.repoName}
+							</Badge>
+						{/if}
 						{#if ws.agents.length}<StatusBadge status={ws.status} />{/if}
 					</div>
 					<DropdownMenu.Root>
@@ -189,6 +221,9 @@
 							</DropdownMenu.Group>
 							<DropdownMenu.Separator />
 							<DropdownMenu.Group>
+								{#if ws.worktree?.linked}
+									<DropdownMenu.Item variant="destructive" onSelect={() => removeWorktree(ws.id, ws.label)}>Remove worktree</DropdownMenu.Item>
+								{/if}
 								<DropdownMenu.Item variant="destructive" onSelect={() => closeWorkspace(ws.id, ws.label)}>Close workspace</DropdownMenu.Item>
 							</DropdownMenu.Group>
 						</DropdownMenu.Content>

@@ -58,6 +58,8 @@ export type TabView = {
 export type WorkspaceView = {
 	id: string;
 	label: string;
+	/** Set when the workspace is a git checkout Herdr tracks (the main repo or a linked worktree). */
+	worktree: { repoName: string; repoRoot: string; checkoutPath: string; linked: boolean } | null;
 	status: AgentStatus;
 	paneCount: number;
 	tabs: TabView[];

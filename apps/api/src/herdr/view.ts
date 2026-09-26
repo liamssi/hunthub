@@ -17,7 +17,15 @@ const snapshotSchema = z.object({
 				label: z.string().optional(),
 				number: z.number().optional(),
 				agent_status: statusSchema.optional(),
-				pane_count: z.number().optional()
+				pane_count: z.number().optional(),
+				worktree: z
+					.object({
+						repo_name: z.string(),
+						repo_root: z.string(),
+						checkout_path: z.string(),
+						is_linked_worktree: z.boolean().optional()
+					})
+					.nullish()
 			})
 		)
 		.default([]),
@@ -64,6 +72,14 @@ export function sessionView(
 	const workspaces: WorkspaceView[] = parsed.data.workspaces.map((w) => ({
 		id: w.workspace_id,
 		label: w.label || `Workspace ${w.number ?? w.workspace_id}`,
+		worktree: w.worktree
+			? {
+					repoName: w.worktree.repo_name,
+					repoRoot: w.worktree.repo_root,
+					checkoutPath: w.worktree.checkout_path,
+					linked: w.worktree.is_linked_worktree ?? false
+				}
+			: null,
 		status: w.agent_status ?? 'unknown',
 		paneCount: w.pane_count ?? 0,
 		tabs: [],
