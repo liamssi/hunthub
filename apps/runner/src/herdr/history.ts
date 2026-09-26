@@ -22,51 +22,38 @@ export const CLEARED_MARKER = '\x1b[2m⋯ the screen was cleared ⋯\x1b[0m';
 type Transcript = { lines: string[]; readAt: number };
 
 /**
- * Merges Herdr's latest lines into a transcript. The last kept line is the
- * live one (a prompt being typed on changes), so it's always replaced.
- * Returns the merged lines.
+ * Merges Herdr's latest lines into a transcript. Herdr's lines are the truth for
+ * everything they cover, including the bottom of the screen, which programs
+ * (agents especially) keep redrawing; the transcript only adds what's older.
+ * The join is found through Herdr's oldest lines, which no longer change: where
+ * they appear in the transcript, it continues with Herdr's lines from there.
  */
 export function mergeLines(kept: string[], latest: string[], max = HISTORY_LINES): string[] {
 	if (!kept.length) return latest.slice(-max);
 	if (!latest.length) return kept;
-	const stable = kept.slice(0, -1);
-	// The longest end of what's kept that the new lines start with.
-	const limit = Math.min(stable.length, latest.length);
-	let overlap = -1;
-	for (let t = limit; t >= 1; t--) {
-		if (stable[stable.length - t] !== latest[0]) continue;
-		let same = true;
-		for (let k = 1; k < t; k++) {
-			if (stable[stable.length - t + k] !== latest[k]) {
-				same = false;
-				break;
-			}
-		}
-		if (same) {
-			overlap = t;
-			break;
-		}
-	}
 	let merged: string[];
-	if (overlap > 0) merged = [...stable.slice(0, stable.length - overlap), ...latest];
-	else if (latest.length >= READ_LINES) merged = [...stable, GAP_MARKER, ...latest];
+	const from = kept[0] === latest[0] ? 0 : lastStart(kept, latest);
+	if (from >= 0) merged = [...kept.slice(0, from), ...latest];
 	else {
-		// Herdr's scrollback was rewritten: a program redrew its screen, or the pane was
-		// cleared (an agent like Claude Code clears and reprints its conversation on resize).
-		// Where the new lines begin with lines already kept, they continue from there;
-		// otherwise the earlier output stays, with a marker.
-		const from = lastStart(stable, latest);
-		merged = from >= 0 ? [...stable.slice(0, from), ...latest] : [...withoutMarkerAtEnd(stable), CLEARED_MARKER, ...latest];
+		// Nothing in common. The kept lines' last one was still changing (a prompt being typed).
+		const earlier = withoutMarkerAtEnd(kept.slice(0, -1));
+		// Herdr has less than it hands out, so its scrollback was cleared (\`clear\`, or an agent
+		// reprinting on resize); or it has more, and more arrived between reads than fits.
+		merged = [...earlier, latest.length < READ_LINES ? CLEARED_MARKER : GAP_MARKER, ...latest];
 	}
 	return merged.length > max ? merged.slice(-max) : merged;
 }
 
+/** How many of Herdr's oldest lines identify where they join the transcript. */
+const ANCHOR_LINES = 3;
+
 /**
- * Where in the kept lines Herdr's lines begin (their first few lines, at least one
- * of them not blank), the last such place; -1 when they don't.
+ * Where Herdr's oldest lines appear in the kept lines (the last place, so a
+ * repeated passage duplicates rather than loses output); -1 when they don't.
  */
 function lastStart(kept: string[], latest: string[]): number {
-	const n = Math.min(3, latest.length);
+	const n = Math.min(ANCHOR_LINES, latest.length);
+	// Blank lines alone match anywhere.
 	if (!latest.slice(0, n).some((l) => l.trim())) return -1;
 	for (let k = kept.length - n; k >= 0; k--) {
 		let same = true;

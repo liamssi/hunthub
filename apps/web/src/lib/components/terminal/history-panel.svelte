@@ -1,7 +1,6 @@
 <script lang="ts">
-	// A pane's recent output, shown above its live terminal so the prompt (or an
-	// agent's input box) stays visible while you read back. Read-only; it
-	// refreshes while you're at its end and closes when you scroll past it.
+	// A pane's output history (kept by the runner), shown over its live terminal.
+	// Read-only; it refreshes while you're at its end and closes when you scroll past it.
 	import '@xterm/xterm/css/xterm.css';
 	import type { Terminal } from '@xterm/xterm';
 	import { onMount, untrack } from 'svelte';
@@ -87,20 +86,20 @@
 		const atEnd = () => !term || term.buffer.active.viewportY >= term.buffer.active.baseY;
 
 		/**
-		 * Shows the newest history. New output is added in place when it only grew
-		 * (no redraw, so no flicker); when earlier lines changed (a program redrew its
-		 * screen) it's drawn again, keeping the reading position when scrolled up.
+		 * Shows the newest history. New output is added in place (no redraw, so no
+		 * flicker). Anything else (a program redrew the bottom of its screen) is drawn
+		 * again only while you're at the end; while you read further up nothing moves,
+		 * and it catches up on the next refresh once you're back at the end.
 		 */
 		function show(text: string, first: boolean) {
 			if (!term || text === lastText) return;
-			const follow = first || atEnd();
 			if (!first && text.startsWith(lastText)) {
+				const follow = atEnd();
 				term.write(text.slice(lastText.length), () => follow && term?.scrollToBottom());
-			} else {
-				const top = term.buffer.active.viewportY;
+			} else if (first || atEnd()) {
 				term.reset();
-				term.write(text, () => (follow ? term?.scrollToBottom() : term?.scrollToLine(top)));
-			}
+				term.write(text, () => term?.scrollToBottom());
+			} else return;
 			lastText = text;
 		}
 

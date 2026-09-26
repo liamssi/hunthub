@@ -53,6 +53,15 @@ describe('pane history transcript', () => {
 		expect(kept).toEqual([...range(900, 910), '$ claude', ...conversation, '● more', '● and more', '> ']);
 	});
 
+	test('an agent redrawing the bottom of a long pane adds nothing twice', () => {
+		// Herdr hands out its last 1000 lines; the last few (spinner, input box) keep changing.
+		const screen = (tick: number) => [`✻ Thinking… (${tick}s)`, '╭──────╮', '│ >    │', '╰──────╯'];
+		let kept = [...range(1, 996), ...screen(1)];
+		for (let tick = 2; tick <= 20; tick++) kept = mergeLines(kept, [...range(1 + tick, 996), ...range(997, 996 + tick), ...screen(tick)].slice(-1000));
+		expect(kept).toEqual([...range(1, 1016), ...screen(20)]);
+		expect(kept).not.toContain(GAP_MARKER);
+	});
+
 	test('a program redrawing its screen (Herdr still has everything) replaces the tail', () => {
 		const kept = [...range(1, 30), '╭ box ╮', '│ old │', '╰─────╯'];
 		const latest = [...range(1, 30), '╭ box ╮', '│ new │', '╰─────╯'];
