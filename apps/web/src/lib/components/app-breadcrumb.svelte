@@ -17,6 +17,8 @@
 	function labelFor(path: string): string | undefined {
 		if (labels[path]) return labels[path];
 		if (/^\/machines\/[^/]+$/.test(path)) return page.data.machine?.name;
+		const session = /^\/machines\/[^/]+\/sessions\/([^/]+)$/.exec(path);
+		if (session) return decodeURIComponent(session[1]!);
 	}
 
 	const crumbs = $derived.by(() => {
