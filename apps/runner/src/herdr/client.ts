@@ -27,14 +27,19 @@ export function socketPathFor(session: string): string {
 		: join(herdrDir(), 'sessions', session, 'herdr.sock');
 }
 
-/** Sessions that have a socket file (their server may or may not be running). */
+/**
+ * The sessions Herdr knows, running or stopped, the way `herdr session list`
+ * sees them: the default session plus every folder under sessions/. (A clean
+ * stop removes the socket, so sockets alone would lose stopped sessions.)
+ */
 export function discoverSessions(): string[] {
 	const sessions: string[] = [];
-	if (existsSync(socketPathFor(DEFAULT_SESSION))) sessions.push(DEFAULT_SESSION);
+	if (existsSync(herdrDir())) sessions.push(DEFAULT_SESSION);
 	const dir = join(herdrDir(), 'sessions');
 	if (existsSync(dir)) {
 		for (const entry of readdirSync(dir, { withFileTypes: true })) {
-			if (entry.isDirectory() && entry.name !== DEFAULT_SESSION && existsSync(socketPathFor(entry.name))) {
+			// Folder names become socket paths and session names; skip anything Herdr wouldn't accept.
+			if (entry.isDirectory() && entry.name !== DEFAULT_SESSION && /^[A-Za-z0-9._-]{1,64}$/.test(entry.name)) {
 				sessions.push(entry.name);
 			}
 		}

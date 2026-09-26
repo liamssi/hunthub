@@ -6,6 +6,8 @@
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 	import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
 	import LayersIcon from '@lucide/svelte/icons/layers';
+	import LayoutGridIcon from '@lucide/svelte/icons/layout-grid';
+	import ListIcon from '@lucide/svelte/icons/list';
 	import PinIcon from '@lucide/svelte/icons/pin';
 	import PinOffIcon from '@lucide/svelte/icons/pin-off';
 	import PlayIcon from '@lucide/svelte/icons/play';
@@ -27,6 +29,7 @@
 	import { Input } from '$lib/components/ui/input/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
+	import { Spinner } from '$lib/components/ui/spinner/index.js';
 	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
 	import { startSession, stopSession } from '$lib/console';
 	import { fleet, needsYouCount, sessionAgents, workspaceHref } from '$lib/fleet.svelte';
@@ -48,6 +51,8 @@
 	const machineFilter = $derived(page.url.searchParams.get('machine') ?? 'all');
 	const statusFilter = $derived(param('status', ['all', 'blocked', 'working', 'done', 'idle'] as const, 'all'));
 	const onlineOnly = $derived(page.url.searchParams.get('online') === '1');
+	/** Cards by default, like the machines page; ?layout=list for rows. */
+	const layout = $derived(page.url.searchParams.get('layout') === 'list' ? 'list' : 'cards');
 	let query = $state(page.url.searchParams.get('q') ?? '');
 
 	function setParam(name: string, value: string | null) {
@@ -192,6 +197,15 @@
 	// --- Actions ---------------------------------------------------------------------
 	let newSession = $state<{ open: boolean; machine: Machine | null }>({ open: false, machine: null });
 	let confirmStop = $state<{ open: boolean; machine: Machine | null; session: string }>({ open: false, machine: null, session: '' });
+	// A stopped session starts and then opens in the workspace.
+	let startingKeys = $state<Record<string, boolean>>({});
+	async function startAndOpen(machine: Machine, name: string, key: string) {
+		startingKeys[key] = true;
+		const ok = await startSession(machine.id, name);
+		delete startingKeys[key];
+		if (ok) void goto(workspaceHref(machine.id, name));
+	}
+
 	async function createSession(values: Record<string, string>) {
 		const machine = newSession.machine;
 		if (!machine) return false;
@@ -231,6 +245,155 @@
 	>
 		{#if pinned}<PinOffIcon />{:else}<PinIcon />{/if}
 	</Button>
+{/snippet}
+
+{#snippet sessionMenu(r: SessionRow, running: boolean)}
+	<DropdownMenu.Root>
+		<DropdownMenu.Trigger>
+			{#snippet child({ props })}
+				<Button {...props} size="icon-sm" variant="ghost" aria-label="{r.session.name} actions"><EllipsisIcon /></Button>
+			{/snippet}
+		</DropdownMenu.Trigger>
+		<DropdownMenu.Content align="end">
+			<DropdownMenu.Group>
+				<DropdownMenu.Item>
+					{#snippet child({ props })}<a {...props} href="/machines/{r.machine.id}/sessions/{encodeURIComponent(r.session.name)}">Manage session</a>{/snippet}
+				</DropdownMenu.Item>
+				{#if running && online(r.machine)}
+					<DropdownMenu.Item variant="destructive" onSelect={() => (confirmStop = { open: true, machine: r.machine, session: r.session.name })}>
+						Stop session
+					</DropdownMenu.Item>
+				{/if}
+			</DropdownMenu.Group>
+		</DropdownMenu.Content>
+	</DropdownMenu.Root>
+{/snippet}
+
+{#snippet sessionOpen(r: SessionRow, running: boolean)}
+	{#if running}
+		<Button size="sm" href={workspaceHref(r.machine.id, r.session.name)}>Open</Button>
+	{:else if online(r.machine)}
+		<Button size="sm" variant="outline" disabled={!!startingKeys[r.key]} onclick={() => startAndOpen(r.machine, r.session.name, r.key)}>
+			{#if startingKeys[r.key]}<Spinner data-icon="inline-start" />Starting…{:else}<PlayIcon data-icon="inline-start" />Start & open{/if}
+		</Button>
+	{:else}
+		<span class="text-xs text-muted-foreground">Machine offline</span>
+	{/if}
+{/snippet}
+
+{#snippet statusChips(agents: ReturnType<typeof sessionAgents>)}
+	{#each (['blocked', 'working', 'done'] as const).filter((st) => agents.some((a) => a.status === st)) as st (st)}
+		<Badge variant={st === 'blocked' ? 'destructive' : 'outline'} class="gap-1" title={statusLabels[st]}>
+			<StatusBadge status={st} compact />{agents.filter((a) => a.status === st).length}
+		</Badge>
+	{/each}
+{/snippet}
+
+{#snippet item(r: Row, card: boolean)}
+	{#if r.kind === 'session'}
+		{@const running = r.session.state === 'running'}
+		{@const agents = sessionAgents(r.session)}
+		{#if card}
+			<div class="flex min-w-0 items-start gap-2">
+				<LayersIcon class="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+				<div class="flex min-w-0 flex-1 flex-col">
+					<a href={running ? workspaceHref(r.machine.id, r.session.name) : undefined} class={cn('truncate font-medium', running && 'hover:underline')}>{r.session.name}</a>
+					{#if group !== 'machine'}<span class="truncate text-xs text-muted-foreground">{r.machine.name}</span>{/if}
+				</div>
+				{@render pinButton(r.machine.id, r.session.name, null, r.session.name)}
+				{@render sessionMenu(r, running)}
+			</div>
+			<div class="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+				{#if running}
+					<span>{r.session.workspaces.length} spaces · {agents.length} agents</span>
+					{@render statusChips(agents)}
+				{:else}
+					<Badge variant="outline">Stopped</Badge>
+				{/if}
+			</div>
+			<div class="mt-auto flex justify-end">{@render sessionOpen(r, running)}</div>
+		{:else}
+			<LayersIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+			<div class="flex min-w-0 flex-1 flex-col">
+				<a href={running ? workspaceHref(r.machine.id, r.session.name) : undefined} class={cn('truncate font-medium', running && 'hover:underline')}>{r.session.name}</a>
+				<span class="truncate text-xs text-muted-foreground">
+					{#if group !== 'machine'}{r.machine.name} · {/if}{r.session.workspaces.length} spaces · {agents.length} agents
+				</span>
+			</div>
+			<div class="hidden shrink-0 items-center gap-1 sm:flex">{@render statusChips(agents)}</div>
+			{#if !running}<Badge variant="outline">Stopped</Badge>{/if}
+			{@render pinButton(r.machine.id, r.session.name, null, r.session.name)}
+			{@render sessionOpen(r, running)}
+			{@render sessionMenu(r, running)}
+		{/if}
+	{:else if r.kind === 'pane'}
+		{@const agent = r.pane.agent}
+		{@const href = workspaceHref(r.machine.id, r.session.name, r.pane.id)}
+		{@const where = [r.space.label, `Tab ${r.tab.label}`, group !== 'session' ? r.session.name : null, group !== 'machine' && group !== 'session' ? r.machine.name : null].filter(Boolean).join(' · ')}
+		{#if card}
+			<div class="flex min-w-0 items-start gap-2">
+				{#if agent}<BotIcon class="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />{:else}<SquareTerminalIcon class="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />{/if}
+				<div class="flex min-w-0 flex-1 flex-col">
+					<a {href} class="flex min-w-0 items-center gap-2 font-medium hover:underline">
+						<span class="truncate">{agent ? agent.name : 'Shell'}</span>
+					</a>
+					<span class="truncate text-xs text-muted-foreground">{where}</span>
+				</div>
+				{@render pinButton(r.machine.id, r.session.name, r.pane.id, agent?.name ?? `Shell · ${folder(r.pane.cwd)}`)}
+			</div>
+			<div class="flex min-w-0 items-center gap-2 text-xs">
+				{#if agent}<StatusBadge status={agent.status} />{/if}
+				<span class="min-w-0 truncate font-mono text-muted-foreground" title={r.pane.cwd ?? undefined}>{folder(r.pane.cwd)}</span>
+			</div>
+			<div class="mt-auto flex justify-end"><Button size="sm" variant="outline" {href}>Open</Button></div>
+		{:else}
+			{#if agent}<BotIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />{:else}<SquareTerminalIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />{/if}
+			<div class="flex min-w-0 flex-1 flex-col">
+				<a {href} class="flex min-w-0 items-center gap-2 font-medium hover:underline">
+					<span class="truncate">{agent ? agent.name : 'Shell'}</span>
+					{#if agent}<StatusBadge status={agent.status} compact />{/if}
+				</a>
+				<span class="truncate text-xs text-muted-foreground">{where}</span>
+			</div>
+			<span class="hidden max-w-56 shrink-0 truncate font-mono text-xs text-muted-foreground md:inline" title={r.pane.cwd ?? undefined}>{folder(r.pane.cwd)}</span>
+			{@render pinButton(r.machine.id, r.session.name, r.pane.id, agent?.name ?? `Shell · ${folder(r.pane.cwd)}`)}
+			<Button size="sm" variant="outline" {href}>Open</Button>
+		{/if}
+	{:else}
+		{@const state = online(r.machine) ? 'Online' : r.machine.status === 'active' ? 'Offline' : 'Disabled'}
+		{#if card}
+			<div class="flex min-w-0 items-start gap-2">
+				<span class={cn('mt-1.5 size-2 shrink-0 rounded-full', online(r.machine) ? 'bg-emerald-500' : 'bg-muted-foreground/50')} aria-hidden="true"></span>
+				<div class="flex min-w-0 flex-1 flex-col">
+					<a href="/machines/{r.machine.id}" class="truncate font-medium hover:underline">{r.machine.name}</a>
+					<span class="truncate text-xs text-muted-foreground">{state}{#if r.machine.host} · {r.machine.host.os}{/if}</span>
+				</div>
+			</div>
+			<div class="grid grid-cols-2 gap-2 text-xs">
+				<span class="text-muted-foreground">Sessions <span class="font-medium text-foreground tabular-nums">{r.sessions}</span></span>
+				<span class="text-muted-foreground">Agents <span class="font-medium text-foreground tabular-nums">{r.agents}</span></span>
+				{#if r.machine.stats}
+					<span class="text-muted-foreground">CPU <span class="font-medium text-foreground tabular-nums">{Math.round(r.machine.stats.cpuPct)}%</span></span>
+					<span class="text-muted-foreground">
+						Memory <span class="font-medium text-foreground tabular-nums">{Math.round((r.machine.stats.mem.used / Math.max(1, r.machine.stats.mem.total)) * 100)}%</span>
+					</span>
+				{/if}
+			</div>
+			<div class="mt-auto flex justify-end gap-1">
+				<Button size="sm" variant="ghost" href="/machines/{r.machine.id}">Details</Button>
+				<Button size="sm" variant="outline" href="/explore?machine={r.machine.id}">Sessions</Button>
+			</div>
+		{:else}
+			<span class={cn('size-2 shrink-0 rounded-full', online(r.machine) ? 'bg-emerald-500' : 'bg-muted-foreground/50')} aria-hidden="true"></span>
+			<div class="flex min-w-0 flex-1 flex-col">
+				<a href="/machines/{r.machine.id}" class="truncate font-medium hover:underline">{r.machine.name}</a>
+				<span class="truncate text-xs text-muted-foreground">{state}{#if r.machine.host} · {r.machine.host.os}{/if}</span>
+			</div>
+			<span class="shrink-0 text-xs text-muted-foreground tabular-nums">{r.sessions} sessions · {r.agents} agents</span>
+			<Button size="sm" variant="outline" href="/explore?machine={r.machine.id}">Sessions</Button>
+			<Button size="sm" variant="ghost" href="/machines/{r.machine.id}">Details</Button>
+		{/if}
+	{/if}
 {/snippet}
 
 <div class="flex flex-col gap-4">
@@ -292,6 +455,17 @@
 		<Button size="sm" variant={onlineOnly ? 'secondary' : 'outline'} aria-pressed={onlineOnly} onclick={() => setParam('online', onlineOnly ? null : '1')}>
 			Online only
 		</Button>
+		<ToggleGroup.Root
+			type="single"
+			variant="outline"
+			size="sm"
+			class="ms-auto"
+			aria-label="Layout"
+			bind:value={() => layout, (v) => v && setParam('layout', v === 'cards' ? null : v)}
+		>
+			<ToggleGroup.Item value="cards" aria-label="Cards" title="Cards"><LayoutGridIcon /></ToggleGroup.Item>
+			<ToggleGroup.Item value="list" aria-label="List" title="List"><ListIcon /></ToggleGroup.Item>
+		</ToggleGroup.Root>
 	</div>
 
 	{#if !fleet.loaded}
@@ -347,98 +521,25 @@
 						</div>
 					{/if}
 					{#if !collapsed[g.key]}
-						<ul class="divide-y">
-							{#each g.rows as r (r.key)}
-								<li class="group/row flex min-w-0 items-center gap-3 px-3 py-2 hover:bg-muted/30">
-									{#if r.kind === 'session'}
-										{@const running = r.session.state === 'running'}
-										{@const agents = sessionAgents(r.session)}
-										<LayersIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-										<div class="flex min-w-0 flex-1 flex-col">
-											<a
-												href={running ? workspaceHref(r.machine.id, r.session.name) : undefined}
-												class={cn('truncate font-medium', running && 'hover:underline')}
-												aria-disabled={!running}
-											>
-												{r.session.name}
-											</a>
-											<span class="truncate text-xs text-muted-foreground">
-												{#if group !== 'machine'}{r.machine.name} · {/if}{r.session.workspaces.length} spaces · {agents.length} agents
-											</span>
-										</div>
-										<div class="hidden shrink-0 items-center gap-1 sm:flex">
-											{#each (['blocked', 'working', 'done'] as const).filter((st) => agents.some((a) => a.status === st)) as st (st)}
-												<Badge variant={st === 'blocked' ? 'destructive' : 'outline'} class="gap-1">
-													<StatusBadge status={st} compact />{agents.filter((a) => a.status === st).length}
-												</Badge>
-											{/each}
-										</div>
-										{#if !running}<Badge variant="outline">Stopped</Badge>{/if}
-										{@render pinButton(r.machine.id, r.session.name, null, r.session.name)}
-										{#if running}
-											<Button size="sm" href={workspaceHref(r.machine.id, r.session.name)}>Open</Button>
-										{:else if online(r.machine)}
-											<Button size="sm" variant="outline" onclick={() => startSession(r.machine.id, r.session.name)}><PlayIcon data-icon="inline-start" />Start</Button>
-										{/if}
-										<DropdownMenu.Root>
-											<DropdownMenu.Trigger>
-												{#snippet child({ props })}
-													<Button {...props} size="icon-sm" variant="ghost" aria-label="{r.session.name} actions"><EllipsisIcon /></Button>
-												{/snippet}
-											</DropdownMenu.Trigger>
-											<DropdownMenu.Content align="end">
-												<DropdownMenu.Group>
-													<DropdownMenu.Item>
-														{#snippet child({ props })}<a {...props} href="/machines/{r.machine.id}/sessions/{encodeURIComponent(r.session.name)}">Manage session</a>{/snippet}
-													</DropdownMenu.Item>
-													{#if running && online(r.machine)}
-														<DropdownMenu.Item variant="destructive" onSelect={() => (confirmStop = { open: true, machine: r.machine, session: r.session.name })}>
-															Stop session
-														</DropdownMenu.Item>
-													{/if}
-												</DropdownMenu.Group>
-											</DropdownMenu.Content>
-										</DropdownMenu.Root>
-									{:else if r.kind === 'pane'}
-										{@const agent = r.pane.agent}
-										{#if agent}
-											<BotIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-										{:else}
-											<SquareTerminalIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-										{/if}
-										<div class="flex min-w-0 flex-1 flex-col">
-											<a href={workspaceHref(r.machine.id, r.session.name, r.pane.id)} class="flex min-w-0 items-center gap-2 font-medium hover:underline">
-												<span class="truncate">{agent ? agent.name : 'Shell'}</span>
-												{#if agent}<StatusBadge status={agent.status} compact />{/if}
-											</a>
-											<span class="truncate text-xs text-muted-foreground">
-												{[r.space.label, `Tab ${r.tab.label}`, group !== 'session' ? r.session.name : null, group !== 'machine' && group !== 'session' ? r.machine.name : null]
-													.filter(Boolean)
-													.join(' · ')}
-											</span>
-										</div>
-										<span class="hidden max-w-56 shrink-0 truncate font-mono text-xs text-muted-foreground md:inline" title={r.pane.cwd ?? undefined}>{folder(r.pane.cwd)}</span>
-										{@render pinButton(r.machine.id, r.session.name, r.pane.id, agent?.name ?? `Shell · ${folder(r.pane.cwd)}`)}
-										<Button size="sm" variant="outline" href={workspaceHref(r.machine.id, r.session.name, r.pane.id)}>Open</Button>
-									{:else}
-										<span class={cn('size-2 shrink-0 rounded-full', online(r.machine) ? 'bg-emerald-500' : 'bg-muted-foreground/50')} aria-hidden="true"></span>
-										<div class="flex min-w-0 flex-1 flex-col">
-											<a href="/machines/{r.machine.id}" class="truncate font-medium hover:underline">{r.machine.name}</a>
-											<span class="truncate text-xs text-muted-foreground">
-												{online(r.machine) ? 'Online' : r.machine.status === 'active' ? 'Offline' : 'Disabled'}{#if r.machine.host} · {r.machine.host.os}{/if}
-											</span>
-										</div>
-										<span class="shrink-0 text-xs text-muted-foreground tabular-nums">{r.sessions} sessions · {r.agents} agents</span>
-										<Button size="sm" variant="outline" href="/explore?machine={r.machine.id}">Sessions</Button>
-										<Button size="sm" variant="ghost" href="/machines/{r.machine.id}">Details</Button>
-									{/if}
-								</li>
-							{:else}
-								<li class="px-3 py-3 text-sm text-muted-foreground">
-									{g.machine && !online(g.machine) ? 'Offline; its sessions show when it reconnects.' : 'No sessions.'}
-								</li>
-							{/each}
-						</ul>
+						{#if !g.rows.length}
+							<p class="px-3 py-3 text-sm text-muted-foreground">
+								{g.machine && !online(g.machine) ? 'Offline; its sessions show when it reconnects.' : 'No sessions.'}
+							</p>
+						{:else if layout === 'cards'}
+							<div class="grid gap-3 p-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+								{#each g.rows as r (r.key)}
+									<article class="group/row flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3 text-card-foreground shadow-xs transition-colors hover:border-foreground/20">
+										{@render item(r, true)}
+									</article>
+								{/each}
+							</div>
+						{:else}
+							<ul class="divide-y">
+								{#each g.rows as r (r.key)}
+									<li class="group/row flex min-w-0 items-center gap-3 px-3 py-2 hover:bg-muted/30">{@render item(r, false)}</li>
+								{/each}
+							</ul>
+						{/if}
 					{/if}
 				</section>
 			{/each}

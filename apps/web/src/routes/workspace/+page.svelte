@@ -15,6 +15,7 @@
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import MinimizeIcon from '@lucide/svelte/icons/minimize';
 	import PaletteIcon from '@lucide/svelte/icons/palette';
+	import PlayIcon from '@lucide/svelte/icons/play';
 	import PinIcon from '@lucide/svelte/icons/pin';
 	import PinOffIcon from '@lucide/svelte/icons/pin-off';
 	import PlusIcon from '@lucide/svelte/icons/plus';
@@ -33,6 +34,8 @@
 	import { useSidebar } from '$lib/components/ui/sidebar/context.svelte.js';
 	import { Spinner } from '$lib/components/ui/spinner/index.js';
 	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
+	import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
+	import { startSession } from '$lib/console';
 	import { fleet, machineById, needsYouCount, sessionOf, workspaceHref } from '$lib/fleet.svelte';
 	import { findPin, togglePin } from '$lib/pins.svelte';
 	import { appearance, loadAppearance, themeColors, workspaceVars } from '$lib/terminal-appearance.svelte';
@@ -126,6 +129,22 @@
 
 	// Picker: open any session on any machine.
 	let pickerOpen = $state(false);
+
+	// A stopped session can be started and opened in one go (after asking).
+	let starting = $state<Record<string, boolean>>({});
+	let askStart = $state<{ open: boolean; ref: Ref | null }>({ open: false, ref: null });
+	async function startAndOpen(ref: Ref) {
+		const key = refKey(ref);
+		starting[key] = true;
+		show(ref);
+		await startSession(ref.machineId, ref.session);
+		delete starting[key];
+	}
+	function openFromPicker(ref: Ref, state: 'running' | 'stopped') {
+		pickerOpen = false;
+		if (state === 'running') show(ref);
+		else askStart = { open: true, ref };
+	}
 	const allSessions = $derived(
 		fleet.machines.flatMap((m) => (fleet.herdr[m.id]?.sessions ?? []).map((s) => ({ machine: m, session: s })))
 	);
@@ -393,6 +412,9 @@
 						<div class="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground">
 							{#if !fleet.loaded}
 								<Spinner />
+							{:else if starting[refKey(o)]}
+								<Spinner />
+								<p>Starting {o.session} on {machineById(o.machineId)?.name ?? 'the machine'}…</p>
 							{:else if machineById(o.machineId)?.connection !== 'online'}
 								<p>{machineById(o.machineId)?.name ?? 'The machine'} is offline; the session shows when it reconnects.</p>
 							{:else if !s}
@@ -400,7 +422,10 @@
 								<Button size="sm" variant="outline" onclick={() => close(o)}>Close it</Button>
 							{:else}
 								<p>The session {o.session} is stopped.</p>
-								<Button size="sm" variant="outline" href="/machines/{o.machineId}/sessions/{encodeURIComponent(o.session)}">Manage session</Button>
+								<div class="flex gap-2">
+									<Button size="sm" onclick={() => startAndOpen(o)}><PlayIcon data-icon="inline-start" />Start session</Button>
+									<Button size="sm" variant="outline" href="/machines/{o.machineId}/sessions/{encodeURIComponent(o.session)}">Manage</Button>
+								</div>
 							{/if}
 						</div>
 					</div>
@@ -420,18 +445,18 @@
 				<Command.Group heading={m.name}>
 					{#each sessions as { session: s } (s.name)}
 						{@const count = needsYouCount(s)}
+						{@const reachable = m.connection === 'online' && m.status === 'active'}
 						<Command.Item
 							value="{s.name} {m.name}"
-							disabled={s.state !== 'running'}
-							onSelect={() => {
-								pickerOpen = false;
-								show({ machineId: m.id, session: s.name });
-							}}
+							disabled={!reachable}
+							onSelect={() => openFromPicker({ machineId: m.id, session: s.name }, s.state)}
 						>
-							<LayersIcon />
+							<LayersIcon class={s.state === 'running' ? undefined : 'opacity-50'} />
 							<span class="min-w-0 flex-1 truncate">{s.name}</span>
 							{#if count}<StatusBadge status="blocked" compact />{/if}
-							<span class="shrink-0 text-xs text-muted-foreground">{s.state === 'running' ? `${s.workspaces.length} spaces` : 'stopped'}</span>
+							<span class="shrink-0 text-xs text-muted-foreground">
+								{#if !reachable}offline{:else if s.state === 'running'}{s.workspaces.length} spaces{:else}stopped · starts when opened{/if}
+							</span>
 						</Command.Item>
 					{/each}
 				</Command.Group>
@@ -441,3 +466,27 @@
 </Command.Dialog>
 
 <AppearanceDialog bind:open={appearanceOpen} />
+
+<AlertDialog.Root bind:open={askStart.open}>
+	<AlertDialog.Content>
+		<AlertDialog.Header>
+			<AlertDialog.Title>Start {askStart.ref?.session}?</AlertDialog.Title>
+			<AlertDialog.Description>
+				The session is stopped on {askStart.ref ? (machineById(askStart.ref.machineId)?.name ?? 'the machine') : ''}. Starting it brings back its
+				saved layout; programs that were running in it are not restarted.
+			</AlertDialog.Description>
+		</AlertDialog.Header>
+		<AlertDialog.Footer>
+			<AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+			<AlertDialog.Action
+				onclick={() => {
+					const ref = askStart.ref;
+					askStart = { open: false, ref: null };
+					if (ref) void startAndOpen(ref);
+				}}
+			>
+				Start and open
+			</AlertDialog.Action>
+		</AlertDialog.Footer>
+	</AlertDialog.Content>
+</AlertDialog.Root>
