@@ -47,6 +47,7 @@
 	import { Kbd } from '$lib/components/ui/kbd/index.js';
 	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
 	import { consoleCall, consoleRequest } from '$lib/console';
+	import { prefetchHistory } from '$lib/pane-history';
 	import { appearance, themeColors, workspaceVars } from '$lib/terminal-appearance.svelte';
 	import { cn } from '$lib/utils.js';
 	import FileExplorer, { type OpenFile } from './file-explorer.svelte';
@@ -215,6 +216,17 @@
 		}
 		if (!next) historyOpen[paneId] = false;
 	}
+	// History is fetched in the background for the panes on screen, so scrolling up is instant.
+	const shownPaneIds = $derived(tab ? tab.panes.map((p) => p.id).join(',') : '');
+	$effect(() => {
+		if (!active || !shownPaneIds) return;
+		const paneIds = shownPaneIds.split(',');
+		const warm = () => paneIds.forEach((id, i) => setTimeout(() => prefetchHistory(machineId, session.name, id), i * 150));
+		warm();
+		const timer = setInterval(warm, 15_000);
+		return () => clearInterval(timer);
+	});
+
 	function closeHistory(paneId: string) {
 		historyOpen[paneId] = false;
 		historySearch[paneId] = false;
@@ -1216,8 +1228,8 @@
 															aria-pressed={isPinned(r.paneId)}
 															aria-label={isPinned(r.paneId) ? 'Unpin prompt' : 'Pin prompt'}
 															title={isPinned(r.paneId)
-																? 'Prompt pinned: scrolling up shows history above it. Click to scroll the whole terminal instead.'
-																: 'Prompt scrolls with the output. Click to keep it visible while you scroll up.'}
+																? 'Prompt pinned: scrolling up shows history above it. Click to let history cover the whole pane.'
+																: 'History covers the whole pane when you scroll up. Click to keep the prompt visible below it.'}
 															onclick={() => togglePin(r.paneId)}
 														>
 															{#if isPinned(r.paneId)}<PinIcon />{:else}<PinOffIcon />{/if}
@@ -1257,7 +1269,10 @@
 								</ContextMenu.Root>
 								<div class="relative min-h-0 flex-1">
 									{#if historyOpen[r.paneId]}
-										<div class="absolute inset-x-0 top-0 z-10" style:height="calc(100% - {Math.round(appearance.size * 1.1 * LIVE_ROWS) + 8}px)">
+										<div
+											class="absolute inset-x-0 top-0 z-10"
+											style:height={isPinned(r.paneId) ? `calc(100% - ${Math.round(appearance.size * 1.1 * LIVE_ROWS) + 8}px)` : '100%'}
+										>
 											<HistoryPanel {machineId} session={session.name} paneId={r.paneId} search={historySearch[r.paneId] ?? false} onclose={() => closeHistory(r.paneId)} />
 										</div>
 									{/if}
@@ -1269,7 +1284,7 @@
 											mode={paneMode[r.paneId] === 'watch' ? 'observe' : mode}
 											takeover={paneMode[r.paneId] === 'takeover'}
 											{transport}
-											onscrollup={isPinned(r.paneId) ? () => (historyOpen[r.paneId] = true) : undefined}
+											onscrollup={() => (historyOpen[r.paneId] = true)}
 											onstatechange={(s) => {
 												states[r.paneId] = s;
 												// A takeover happens once; later reconnects ask normally again.

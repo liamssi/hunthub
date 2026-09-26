@@ -48,7 +48,9 @@ export const LIFECYCLE_METHODS = [SESSION_START, SESSION_STOP, SESSION_DELETE] a
 export const FS_ROOTS = 'hunthub.fs.roots';
 export const FS_LIST = 'hunthub.fs.list';
 export const FS_READ = 'hunthub.fs.read';
-export const FILE_METHODS = [FS_ROOTS, FS_LIST, FS_READ] as const;
+/** A pane's history as HuntHub has seen it (the runner keeps a transcript beyond Herdr's last 1000 lines). */
+export const PANE_HISTORY = 'hunthub.pane.history';
+export const FILE_METHODS = [FS_ROOTS, FS_LIST, FS_READ, PANE_HISTORY] as const;
 
 export type ConsoleMethod = (typeof READ_METHODS)[number] | (typeof MANAGE_METHODS)[number] | (typeof LIFECYCLE_METHODS)[number] | (typeof FILE_METHODS)[number];
 

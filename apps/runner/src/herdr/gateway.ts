@@ -14,12 +14,14 @@ import {
 	FS_LIST,
 	FS_READ,
 	FS_ROOTS,
+	PANE_HISTORY,
 	SESSION_DELETE,
 	SESSION_START,
 	SESSION_STOP,
 	validateSessionName
 } from '@hunthub/shared/console';
 import { FsError, listFolder, readFile, rootsFromSnapshot } from './files';
+import { PaneHistory } from './history';
 import { deleteSession, startSession, stopSession } from './sessions';
 
 export { SESSION_DELETE, SESSION_START, SESSION_STOP } from '@hunthub/shared/console';
@@ -245,6 +247,8 @@ export class HerdrGateway {
 	private folderWatches: FSWatcher[] = [];
 	/** Mutations run one at a time per session, in order. */
 	private queues = new Map<string, Promise<unknown>>();
+	/** Pane transcripts beyond Herdr's last 1000 lines (fed by terminal activity). */
+	readonly history = new PaneHistory();
 
 	constructor(
 		private readonly send: Send,
@@ -258,6 +262,7 @@ export class HerdrGateway {
 	}
 
 	stop() {
+		this.history.stop();
 		if (this.discoverTimer) clearInterval(this.discoverTimer);
 		if (this.discoverSoon) clearTimeout(this.discoverSoon);
 		for (const w of this.folderWatches) w.close();
@@ -361,6 +366,13 @@ export class HerdrGateway {
 				return listFolder(rootsFromSnapshot(this.watchers.get(session)?.snapshot), params);
 			case FS_READ:
 				return readFile(rootsFromSnapshot(this.watchers.get(session)?.snapshot), params);
+			case PANE_HISTORY: {
+				const paneId = params.pane_id;
+				if (typeof paneId !== 'string' || !/^[A-Za-z0-9:_.-]{1,64}$/.test(paneId)) {
+					throw new HerdrError('invalid_params', 'Invalid pane.');
+				}
+				return this.history.get(session, paneId);
+			}
 			case SESSION_START: {
 				const result = await startSession(session);
 				this.discover();

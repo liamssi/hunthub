@@ -39,7 +39,9 @@ export class TerminalManager {
 		private readonly send: Send,
 		private readonly sessionExists: (name: string) => boolean,
 		private readonly log: (msg: string) => void,
-		private readonly sessionRunning: (name: string) => boolean = sessionExists
+		private readonly sessionRunning: (name: string) => boolean = sessionExists,
+		/** A pane produced output (keeps its history transcript current). */
+		private readonly onActivity: (session: string, paneId: string) => void = () => {}
 	) {}
 
 	open(msg: Open) {
@@ -159,6 +161,7 @@ export class TerminalManager {
 			const bytes = f.bytes.toString('base64');
 			if (bytes.length > RUNNER_MAX_MESSAGE_BYTES - 1024) return end('The terminal is too large to stream; make it smaller.');
 			this.send({ type: 'term.frame', channel: msg.channel, frame: { seq: f.seq, full: true, width: f.width, height: f.height, bytes } });
+			this.onActivity(msg.session, msg.target);
 		});
 		session.on('error', (e: Error) => end(`Terminal error: ${e.message}`));
 		session.on('close', () => end('Terminal ended.'));
@@ -253,6 +256,7 @@ export class TerminalManager {
 							channel: msg.channel,
 							frame: { seq: parsed.seq ?? 0, full: !!parsed.full, width: parsed.width ?? msg.cols, height: parsed.height ?? msg.rows, bytes: parsed.bytes }
 						});
+						this.onActivity(msg.session, msg.target);
 					} else if (parsed.type === 'terminal.closed') {
 						closedReason ??= parsed.reason ? `Terminal closed: ${parsed.reason}` : 'Terminal closed.';
 					}

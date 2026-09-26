@@ -246,12 +246,15 @@
 				term.onBinary((data) => sendInput(Uint8Array.from(data, (c) => c.charCodeAt(0) & 0xff)));
 				term.focus();
 			}
-			// The pane keeps its own scrollback; the wheel scrolls it on the machine,
-			// unless the parent shows history itself. Herdr's own UI takes the wheel as mouse input.
+			// Scrolling up opens the pane's history (kept by HuntHub, so it never moves the
+			// pane's shared view on the machine). Shift+wheel goes to the pane itself, for
+			// programs that use the wheel (vim, htop). Herdr's own UI takes the wheel as mouse input.
 			if (view === 'pane') {
 				term.attachCustomWheelEventHandler((e) => {
-					if (e.deltaY < 0 && onscrollup) onscrollup();
-					else if (e.deltaY && mode === 'control') send({ type: 'scroll', direction: e.deltaY < 0 ? 'up' : 'down', lines: 3 });
+					const delta = e.deltaY || e.deltaX;
+					if (e.shiftKey || !onscrollup) {
+						if (delta && mode === 'control') send({ type: 'scroll', direction: delta < 0 ? 'up' : 'down', lines: 3 });
+					} else if (delta < 0) onscrollup();
 					return false;
 				});
 			}

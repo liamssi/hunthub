@@ -14,7 +14,8 @@
 	import { copyText, openWebLink } from '$lib/clipboard';
 	import HistoryIcon from '@lucide/svelte/icons/history';
 	import { Button } from '$lib/components/ui/button/index.js';
-	import { consoleRequest } from '$lib/console';
+	import { cachedHistory, fetchHistory } from '$lib/pane-history';
+	import { toast } from 'svelte-sonner';
 	import { appearance, fontFamily, themeColors } from '$lib/terminal-appearance.svelte';
 
 	let {
@@ -52,8 +53,8 @@
 		root.focus();
 	}
 
-	/** How much history to load. */
-	const LINES = 5000;
+	/** Scrollback kept in the panel (the runner keeps up to 10,000 lines per pane). */
+	const LINES = 10_000;
 	const REFRESH_MS = 3000;
 
 	let container: HTMLDivElement;
@@ -69,22 +70,26 @@
 
 		const atEnd = () => !term || term.buffer.active.viewportY >= term.buffer.active.baseY;
 
-		async function load(first: boolean) {
-			const out = await consoleRequest(machineId, session, 'Load history', 'pane.read', {
-				pane_id: paneId,
-				source: 'recent_unwrapped',
-				format: 'ansi',
-				lines: LINES
-			});
-			if (disposed || !term) return;
-			loading = false;
-			if (!out.ok) return first ? onclose() : undefined;
-			const text = (out.result as { read?: { text?: string } } | null)?.read?.text ?? '';
-			// Only redraw on change, and never while you're reading further up.
-			if (text === lastText || (!first && !atEnd())) return;
+		/** Shows history text: redrawn only when it changed, and never while you're reading further up. */
+		function show(text: string, first: boolean) {
+			if (!term || text === lastText || (!first && !atEnd())) return;
 			lastText = text;
 			term.reset();
-			term.write(text.replace(/\r?\n/g, '\r\n'), () => term?.scrollToBottom());
+			term.write(text, () => term?.scrollToBottom());
+		}
+
+		async function load(first: boolean) {
+			const history = await fetchHistory(machineId, session, paneId);
+			if (disposed || !term) return;
+			loading = false;
+			if (!history) {
+				if (first && !lastText) {
+					toast.error("Couldn't load this pane's history");
+					onclose();
+				}
+				return;
+			}
+			show(history.text, first);
 		}
 
 		void (async () => {
@@ -139,7 +144,13 @@
 			observer.observe(container);
 			if (searchOnOpen) openSearch();
 			else root.focus();
-			await load(true);
+			// The cached copy shows at once (it was fetched in the background); then it's refreshed.
+			const cached = cachedHistory(machineId, session, paneId);
+			if (cached) {
+				loading = false;
+				show(cached.text, true);
+			}
+			await load(!cached);
 			timer = setInterval(() => void load(false), REFRESH_MS);
 		})();
 

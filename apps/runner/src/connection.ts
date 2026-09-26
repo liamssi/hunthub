@@ -126,7 +126,13 @@ export function runConnection({ hubUrl, log, ...opts }: Options): Promise<void> 
 						gateway.start();
 						const g = gateway;
 						terminals?.closeAll();
-						terminals = new TerminalManager(send, (name) => g.hasSession(name), log, (name) => g.isRunning(name));
+						terminals = new TerminalManager(
+							send,
+							(name) => g.hasSession(name),
+							log,
+							(name) => g.isRunning(name),
+							(session, paneId) => g.history.noteActivity(session, paneId)
+						);
 						// Host details rarely change; check once a minute.
 						timers.push(
 							setInterval(() => {
