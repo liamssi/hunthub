@@ -8,7 +8,10 @@
 	import type { Component, Snippet } from 'svelte';
 	import { tick, untrack } from 'svelte';
 	import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
+	import HistoryIcon from '@lucide/svelte/icons/history';
 	import PencilIcon from '@lucide/svelte/icons/pencil';
+	import PinIcon from '@lucide/svelte/icons/pin';
+	import PinOffIcon from '@lucide/svelte/icons/pin-off';
 	import SquareSplitHorizontalIcon from '@lucide/svelte/icons/square-split-horizontal';
 	import SquareSplitVerticalIcon from '@lucide/svelte/icons/square-split-vertical';
 	import XIcon from '@lucide/svelte/icons/x';
@@ -40,6 +43,7 @@
 	import { consoleCall, consoleRequest } from '$lib/console';
 	import { appearance, themeColors, workspaceVars } from '$lib/terminal-appearance.svelte';
 	import { cn } from '$lib/utils.js';
+	import HistoryPanel from './history-panel.svelte';
 	import TerminalView, { type TerminalMode, type TerminalState, type TerminalTransport } from './terminal-view.svelte';
 
 	let {
@@ -170,6 +174,38 @@
 	let maximized = $state<Record<string, string | null>>({});
 	let states = $state<Record<string, TerminalState>>({});
 	let attempts = $state<Record<string, number>>({});
+	// Pinned prompt: scrolling up opens the pane's history above the live terminal,
+	// so its bottom (the prompt, or an agent's input box) stays in view.
+	const PIN_KEY = 'hunthub.workspace.pinPrompt';
+	let pinDefault = $state(true);
+	$effect(() => {
+		try {
+			pinDefault = localStorage.getItem(PIN_KEY) !== 'off';
+		} catch {
+			// Only a convenience.
+		}
+	});
+	let pinned = $state<Record<string, boolean>>({});
+	let historyOpen = $state<Record<string, boolean>>({});
+	const isPinned = (paneId: string) => pinned[paneId] ?? pinDefault;
+	function togglePin(paneId: string) {
+		const next = !isPinned(paneId);
+		pinned[paneId] = next;
+		pinDefault = next;
+		try {
+			localStorage.setItem(PIN_KEY, next ? 'on' : 'off');
+		} catch {
+			// Only a convenience.
+		}
+		if (!next) historyOpen[paneId] = false;
+	}
+	function closeHistory(paneId: string) {
+		historyOpen[paneId] = false;
+		document.querySelector<HTMLTextAreaElement>(`[data-pane="${CSS.escape(paneId)}"] textarea`)?.focus();
+	}
+	/** Live rows left visible under the history panel. */
+	const LIVE_ROWS = 6;
+
 	/** Per pane: watch instead of control, or take control over from its current controller. */
 	let paneMode = $state<Record<string, 'watch' | 'takeover'>>({});
 
@@ -362,6 +398,7 @@
 			[
 				{ label: 'Split right', icon: SquareSplitHorizontalIcon, shortcut: keys('\\'), run: () => void splitPane(t.id, paneId, 'right') },
 				{ label: 'Split down', icon: SquareSplitVerticalIcon, shortcut: keys('-'), run: () => void splitPane(t.id, paneId, 'down') },
+				{ label: 'Show history', icon: HistoryIcon, shortcut: keys('H'), run: () => (historyOpen[paneId] = true) },
 				...(rectsFor(t).length > 1
 					? [{ label: max ? 'Restore layout' : 'Maximize', icon: max ? Minimize2Icon : Maximize2Icon, shortcut: keys('Z'), run: () => toggleMaximize(t.id, paneId) }]
 					: [])
@@ -429,6 +466,10 @@
 		else if (code === 'Minus' && paneId) void splitPane(t.id, paneId, 'down');
 		else if (code === 'KeyZ' && paneId && rectsFor(t).length > 1) toggleMaximize(t.id, paneId);
 		else if (code === 'KeyX' && paneId) closePane(t, paneId);
+		else if (code === 'KeyH' && paneId) {
+			if (historyOpen[paneId]) closeHistory(paneId);
+			else historyOpen[paneId] = true;
+		}
 		else if (code === 'KeyT') void newTab(w.id);
 		else if (code === 'KeyN') newSpace();
 		else if (code === 'BracketLeft' || code === 'BracketRight') {
@@ -449,6 +490,7 @@
 		['Split down', '-'],
 		['Maximize or restore pane', 'Z'],
 		['Close pane', 'X'],
+		['Show or hide history', 'H'],
 		['New tab', 'T'],
 		['Previous / next tab', '[ ]'],
 		['Go to tab 1–9', '1…9'],
@@ -826,6 +868,19 @@
 															(active || max === r.paneId) && 'opacity-100'
 														)}
 													>
+														<Button
+															size="icon-sm"
+															variant="ghost"
+															class="size-6"
+															aria-pressed={isPinned(r.paneId)}
+															aria-label={isPinned(r.paneId) ? 'Unpin prompt' : 'Pin prompt'}
+															title={isPinned(r.paneId)
+																? 'Prompt pinned: scrolling up shows history above it. Click to scroll the whole terminal instead.'
+																: 'Prompt scrolls with the output. Click to keep it visible while you scroll up.'}
+															onclick={() => togglePin(r.paneId)}
+														>
+															{#if isPinned(r.paneId)}<PinIcon />{:else}<PinOffIcon />{/if}
+														</Button>
 														<Button size="icon-sm" variant="ghost" class="size-6" aria-label="Split right" title="Split right ({keys('\\')})" onclick={() => splitPane(t.id, r.paneId, 'right')}>
 															<SquareSplitHorizontalIcon />
 														</Button>
@@ -859,7 +914,12 @@
 									</ContextMenu.Trigger>
 									<ContextMenu.Content class="w-56">{@render contextItems(paneActions(t, r.paneId))}</ContextMenu.Content>
 								</ContextMenu.Root>
-								<div class="min-h-0 flex-1">
+								<div class="relative min-h-0 flex-1">
+									{#if historyOpen[r.paneId]}
+										<div class="absolute inset-x-0 top-0 z-10" style:height="calc(100% - {Math.round(appearance.size * 1.1 * LIVE_ROWS) + 8}px)">
+											<HistoryPanel {machineId} session={session.name} paneId={r.paneId} onclose={() => closeHistory(r.paneId)} />
+										</div>
+									{/if}
 									{#key `${r.paneId}:${mode}:${transport}:${attempts[r.paneId] ?? 0}`}
 										<TerminalView
 											{machineId}
@@ -868,6 +928,7 @@
 											mode={paneMode[r.paneId] === 'watch' ? 'observe' : mode}
 											takeover={paneMode[r.paneId] === 'takeover'}
 											{transport}
+											onscrollup={isPinned(r.paneId) ? () => (historyOpen[r.paneId] = true) : undefined}
 											onstatechange={(s) => {
 												states[r.paneId] = s;
 												// A takeover happens once; later reconnects ask normally again.

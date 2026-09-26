@@ -22,7 +22,8 @@
 		transport,
 		takeover = false,
 		state = $bindable<TerminalState>({ phase: 'connecting' }),
-		onstatechange
+		onstatechange,
+		onscrollup
 	}: {
 		machineId: string;
 		session: string;
@@ -34,6 +35,8 @@
 		state?: TerminalState;
 		/** For parents that track many terminals (binding would need a slot per terminal up front). */
 		onstatechange?: (state: TerminalState) => void;
+		/** When set, scrolling up calls it instead of scrolling the pane (e.g. to show history above a pinned prompt). */
+		onscrollup?: () => void;
 	} = $props();
 
 	function setState(next: TerminalState) {
@@ -210,15 +213,16 @@
 				};
 				term.onData((data) => sendInput(encoder.encode(data)));
 				term.onBinary((data) => sendInput(Uint8Array.from(data, (c) => c.charCodeAt(0) & 0xff)));
-				// The pane keeps its own scrollback; the wheel scrolls it on the machine.
-				// Herdr's own UI takes the wheel as mouse input instead.
-				if (view === 'pane') {
-					term.attachCustomWheelEventHandler((e) => {
-						if (e.deltaY) send({ type: 'scroll', direction: e.deltaY < 0 ? 'up' : 'down', lines: 3 });
-						return false;
-					});
-				}
 				term.focus();
+			}
+			// The pane keeps its own scrollback; the wheel scrolls it on the machine,
+			// unless the parent shows history itself. Herdr's own UI takes the wheel as mouse input.
+			if (view === 'pane') {
+				term.attachCustomWheelEventHandler((e) => {
+					if (e.deltaY < 0 && onscrollup) onscrollup();
+					else if (e.deltaY && mode === 'control') send({ type: 'scroll', direction: e.deltaY < 0 ? 'up' : 'down', lines: 3 });
+					return false;
+				});
 			}
 
 			const refit = () => {
