@@ -7,18 +7,24 @@ import { Hono } from 'hono';
 import { upgradeWebSocket } from 'hono/bun';
 import { z } from 'zod';
 import {
+	AGENT_KINDS,
+	AGENT_LAUNCH,
+	AGENT_STOP,
 	CONSOLE_METHODS,
 	MUTATING_METHODS,
 	SESSION_DELETE,
 	SESSION_START,
 	SESSION_STOP,
+	validateAgentName,
 	validateSessionName
 } from '@hunthub/shared/console';
 import { db } from '../db';
 import { consoleAudit, machine } from '../db/schema';
 import { type AuthVariables, requireUser } from '../lib/auth-guard';
 import { hasCapability } from '../machines/registry';
+import { endRun, recordRun } from './agent-runs';
 import { callHerdr, HerdrCallError } from './calls';
+import { findAgent, refreshMachine } from './state';
 import { closeTerminal, openTerminal, terminalFromBrowser } from './terminals';
 
 const SECRET_KEY = /token|secret|password|passwd|key|credential|auth|cookie|env/i;
@@ -30,7 +36,8 @@ export function redact(value: unknown, depth = 0): unknown {
 	if (Array.isArray(value)) return value.slice(0, 50).map((v) => redact(v, depth + 1));
 	if (value && typeof value === 'object') {
 		return Object.fromEntries(
-			Object.entries(value).map(([k, v]) => [k, SECRET_KEY.test(k) ? '[redacted]' : redact(v, depth + 1)])
+			// `keys` are key names sent to a pane (Ctrl+C), not secrets.
+			Object.entries(value).map(([k, v]) => [k, k !== 'keys' && SECRET_KEY.test(k) ? '[redacted]' : redact(v, depth + 1)])
 		);
 	}
 	return value;
@@ -54,8 +61,9 @@ async function runConsoleCall(
 	if (row.status !== 'active') return { status: 409, body: { error: 'disabled', message: 'The machine is disabled.' } };
 
 	const mutating = MUTATING_METHODS.has(method);
-	// Starting or stopping waits for Herdr; allow more time than a plain call.
-	const timeoutMs = method === SESSION_START || method === SESSION_STOP ? 30_000 : 15_000;
+	// Starting or stopping waits for Herdr; a launch with a first prompt waits for the agent too.
+	const timeoutMs =
+		method === AGENT_LAUNCH ? 150_000 : method === SESSION_START || method === SESSION_STOP || method === AGENT_STOP ? 30_000 : 15_000;
 
 	let outcome: Outcome;
 	let audit: { outcome: 'ok' | 'error' | 'uncertain'; error?: string };
@@ -122,6 +130,18 @@ const terminalQuery = z.object({
 
 const sessionParam = (c: { req: { param: (k: string) => string } }) => decodeURIComponent(c.req.param('session'));
 
+const launchBody = z.object({
+	kind: z.enum(AGENT_KINDS.map((k) => k.kind) as [string, ...string[]]),
+	name: z.string().max(32).optional(),
+	placement: z.enum(['tab', 'split', 'pane']).default('tab'),
+	workspaceId: z.string().max(64).optional(),
+	paneId: z.string().max(64).optional(),
+	direction: z.enum(['right', 'down']).default('right'),
+	cwd: z.string().max(4096).optional(),
+	args: z.array(z.string().max(1000)).max(20).default([]),
+	prompt: z.string().max(20_000).optional()
+});
+
 export const consoleRoutes = new Hono<{ Variables: AuthVariables }>()
 	.use(requireUser)
 	// Start a session (new or stopped).
@@ -139,7 +159,68 @@ export const consoleRoutes = new Hono<{ Variables: AuthVariables }>()
 		const out = await runConsoleCall(c.get('user').id, c.req.param('id'), sessionParam(c), SESSION_DELETE, {});
 		return c.json(out.body, out.status);
 	})
-	// Any other console action inside a session (workspaces, tabs, panes, worktrees).
+	// Starts an agent in a new tab or split (or an idle pane), optionally with a first prompt.
+	.post('/:id/sessions/:session/agents', async (c) => {
+		const body = launchBody.safeParse(await c.req.json().catch(() => null));
+		if (!body.success) return c.json({ error: 'invalid_body', message: body.error.issues[0]?.message }, 400);
+		const b = body.data;
+		const machineId = c.req.param('id');
+		const session = sessionParam(c);
+		const user = c.get('user');
+		const runId = crypto.randomUUID();
+		const name = b.name || `${b.kind}-${runId.slice(0, 4)}`;
+		const invalid = validateAgentName(name) ?? validateSessionName(session);
+		if (invalid) return c.json({ error: 'invalid_name', message: invalid }, 400);
+		// Recorded first, so the agent shows as HuntHub's as soon as it appears.
+		const run = { id: runId, machineId, session, name, kind: b.kind, adopted: false };
+		try {
+			await recordRun({ ...run, userId: user.id, userName: user.name });
+		} catch {
+			return c.json({ error: 'agent_name_taken', message: `An agent named ${name} already exists here.` }, 409);
+		}
+		const out = await runConsoleCall(user.id, machineId, session, AGENT_LAUNCH, {
+			run_id: runId,
+			kind: b.kind,
+			name,
+			placement: b.placement,
+			...(b.workspaceId && { workspace_id: b.workspaceId }),
+			...(b.paneId && { pane_id: b.paneId }),
+			direction: b.direction,
+			...(b.cwd && { cwd: b.cwd }),
+			args: b.args,
+			...(b.prompt && { prompt: b.prompt })
+		});
+		// A definite failure started nothing (an uncertain one might have).
+		if (out.status !== 200 && out.status !== 504) await endRun({ ...run, by: user.name, at: new Date() }).catch(() => {});
+		refreshMachine(machineId);
+		return c.json(out.body, out.status);
+	})
+	// Takes over an agent started elsewhere: it gets a Herdr name if it has none,
+	// and shows as HuntHub's (adopted by this user) from then on.
+	.post('/:id/sessions/:session/agents/adopt', async (c) => {
+		const body = z
+			.object({ paneId: z.string().max(64), name: z.string().max(32).optional() })
+			.safeParse(await c.req.json().catch(() => null));
+		if (!body.success) return c.json({ error: 'invalid_body' }, 400);
+		const machineId = c.req.param('id');
+		const session = sessionParam(c);
+		const user = c.get('user');
+		const agent = findAgent(machineId, session, body.data.paneId);
+		if (!agent) return c.json({ error: 'not_found', message: 'That agent is gone.' }, 404);
+		if (agent.origin === 'hunthub') return c.json({ error: 'already_adopted', message: 'HuntHub already tracks this agent.' }, 409);
+		let name = agent.herdrName;
+		if (!name) {
+			name = body.data.name || `${/^[a-z][a-z0-9_-]*$/.test(agent.kind ?? '') ? agent.kind : 'agent'}-${crypto.randomUUID().slice(0, 4)}`;
+			const invalid = validateAgentName(name);
+			if (invalid) return c.json({ error: 'invalid_name', message: invalid }, 400);
+			const out = await runConsoleCall(user.id, machineId, session, 'agent.rename', { target: agent.paneId, name });
+			if (out.status !== 200) return c.json(out.body, out.status);
+		}
+		await recordRun({ id: crypto.randomUUID(), machineId, session, name, kind: agent.kind, adopted: true, userId: user.id, userName: user.name });
+		refreshMachine(machineId);
+		return c.json({ result: { name } });
+	})
+	// Any other console action inside a session (workspaces, tabs, panes, worktrees, agents).
 	.post('/:id/sessions/:session/call', async (c) => {
 		const body = z
 			.object({ method: z.string().max(128), params: z.record(z.string(), z.unknown()).default({}) })

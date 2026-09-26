@@ -34,13 +34,21 @@ export type AgentView = {
 	workspaceId: string;
 	workspaceLabel: string;
 	paneId: string;
-	/** Herdr's agent name (e.g. "claude", or a custom label). */
+	/** What to call it: its Herdr name if it has one, else its kind (e.g. "claude"). */
 	name: string;
+	/** Herdr's agent kind (claude, codex, …), when known. */
+	kind: string | null;
+	/** Its name in Herdr, which identifies it (agents started outside may have none). */
+	herdrName: string | null;
 	status: AgentStatus;
 	cwd: string | null;
-	/** Started outside HuntHub (all agents are, until M3). */
-	origin: 'external';
+	/** Started or adopted through HuntHub, or started elsewhere (by hand, Hermes, …). */
+	origin: 'hunthub' | 'external';
+	/** Who started or adopted it through HuntHub. */
+	run: AgentRunInfo | null;
 };
+
+export type AgentRunInfo = { id: string; adopted: boolean; by: string | null; at: string };
 
 export type PaneView = {
 	id: string;

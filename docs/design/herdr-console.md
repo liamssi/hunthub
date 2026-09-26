@@ -107,3 +107,19 @@ The hub checks the runner's `terminal:cli` / `terminal:native` capability, refus
 The same page has a second view, "Web layout": our own workspace/tab navigation, and the selected tab drawn as Herdr splits it (from `session.snapshot` `layouts`, normalised by the hub to fractions of the tab area), with one live pane terminal per pane through the chosen transport. Clicking a pane gives it the keyboard; a zoomed tab shows only its zoomed pane. The runner now treats split structure (directions, rounded ratios, zoom) as a reportable change, but not raw rects, which move whenever any client resizes.
 
 Trade-offs to watch in real use: with the CLI transport every visible pane holds its control lock while controlling; with the native transport each pane is its own endpoint client, and Herdr's same-tab pane focus is shared between them.
+
+## Agents as built (M3c, 2026-09-26)
+
+Decided without a check-in (the user asked for the next stages to go ahead overnight); open to change.
+
+- **Start (`hunthub.agent.launch`, runner):** a new tab in a space or a split beside a pane (with `HUNTHUB_RUN_ID` in the new shell's environment), then Herdr's `agent.start`, which types the agent's command into that shell (so it gets the user's PATH, env and folder). A fresh shell is retried until idle (up to 15 s); on failure the new pane is closed again. Creating and starting are queued with the session's other changes; waiting for a first prompt is not.
+- **Only installed agents are offered:** the runner asks the user's login shell (`$SHELL -ilc 'command -v …'`, cached 5 min) which of the supported agent programs exist (`hunthub.agent.kinds`). Supported kinds are a curated subset of Herdr's (`AGENT_KINDS` in `packages/shared/src/console.ts`).
+- **First prompt:** sent with `agent.prompt` only after the agent reports idle twice in a row (1 s apart). If it asks something first (e.g. Codex/Claude "trust this folder?", status blocked), the prompt is not sent and the UI says so: HuntHub never answers an agent's question on the user's behalf.
+- **Prompting later:** a composer (Send = `agent.prompt`, which Herdr refuses while the agent asks something or isn't ready; then "type it into the pane anyway" = `pane.send_input` + Enter; Insert = typed without Enter). Drafts are kept per agent while the page is open.
+- **Stop (`hunthub.agent.stop`, runner):** Herdr has no agent.stop. Ctrl+C twice per round, up to three rounds, until the pane no longer hosts an agent; if it still runs, the UI offers closing the pane.
+- **Identity:** an agent's Herdr name (unique among live agents, kept across Herdr restarts) identifies it; `HUNTHUB_RUN_ID` is only in the environment while the shell lives (Herdr doesn't restore extra env).
+- **Runs (`agent_run` table):** who started or adopted which agent (machine, session, Herdr name, kind, user, time). The hub marks matching live agents `origin: 'hunthub'` with `run {adopted, by, at}`; others stay `external`. A run ends when its agent is gone from a running session (after a 3 min grace for starting); stopped sessions don't end runs, since Herdr brings agents back by name.
+- **Adopt:** an external agent becomes HuntHub's: if it has no Herdr name it gets one (`agent.rename`), and a run records who adopted it.
+- **Console methods:** `agent.start/prompt/send_keys/rename` and `pane.send_input/send_keys` are allowed and audited like other changes (the audit no longer blanks `keys`, which are key names like Ctrl+C).
+- **UI:** New agent dialog (sidebar Agents "+", space menu, Alt+Shift+A), agent menus (Go to, Send prompt…, Rename, Adopt, Stop) on agent rows and agent panes, Alt+Shift+P to prompt the agent in the focused pane, and "started/adopted by" under agents in the sidebar.
+- **Testing rule:** never start an installed agent kind in tests (a PATH-shadowing fake still launched the real Codex once); use uninstalled kinds, mocked requests, or simulated agents (`pane.report_agent`).

@@ -3,6 +3,7 @@ import { websocket } from 'hono/bun';
 import { logger } from 'hono/logger';
 import { app } from './app';
 import { client } from './db';
+import { loadRuns } from './herdr/agent-runs';
 import { loadConnectionSettings } from './machines/connection-settings';
 import { startOfflineSweep, stopOfflineSweep } from './machines/registry';
 import { startStatsJobs, stopStatsJobs } from './machines/stats';
@@ -18,6 +19,7 @@ root.onError((err, c) => {
 });
 
 await loadConnectionSettings();
+await loadRuns();
 const server = Bun.serve({ port: Number(process.env.PORT ?? 3000), fetch: root.fetch, websocket });
 startStatsJobs();
 startOfflineSweep();

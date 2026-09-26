@@ -62,3 +62,68 @@ export const consoleRequest = (machineId: string, session: string, label: string
 /** A read-only call that reports its outcome without toasts (the caller shows errors in place). */
 export const consoleQuery = (machineId: string, session: string, method: string, params: Record<string, unknown>) =>
 	send(`${sessionUrl(machineId, session)}/call`, { method: 'POST', body: JSON.stringify({ method, params }) });
+
+// --- Agents -------------------------------------------------------------------
+
+export type LaunchRequest = {
+	kind: string;
+	name?: string;
+	placement: 'tab' | 'split';
+	workspaceId?: string;
+	paneId?: string;
+	direction?: 'right' | 'down';
+	cwd?: string;
+	prompt?: string;
+};
+
+/**
+ * Starts an agent (a new tab or split with it, optionally given a first prompt
+ * once it's ready). Resolves with the outcome, without toasts: the caller shows
+ * its progress, since a first prompt can take a while.
+ */
+export const launchAgent = (machineId: string, session: string, request: LaunchRequest) =>
+	send(`${sessionUrl(machineId, session)}/agents`, { method: 'POST', body: JSON.stringify(request) });
+
+/** Makes an agent started elsewhere HuntHub's (it gets a Herdr name if it has none). */
+export const adoptAgent = (machineId: string, session: string, paneId: string, label: string) =>
+	run('Adopt agent', `${sessionUrl(machineId, session)}/agents/adopt`, { method: 'POST', body: JSON.stringify({ paneId }) }, `${label} adopted`);
+
+const KINDS_TTL_MS = 5 * 60_000;
+const kindsCache = new Map<string, { at: number; kinds: string[] }>();
+
+/** Agent kinds installed on a machine (checked by its runner; cached for a few minutes). */
+export async function installedAgentKinds(machineId: string, session: string): Promise<string[] | null> {
+	const hit = kindsCache.get(machineId);
+	if (hit && Date.now() - hit.at < KINDS_TTL_MS) return hit.kinds;
+	const out = await send(`${sessionUrl(machineId, session)}/call`, { method: 'POST', body: JSON.stringify({ method: 'hunthub.agent.kinds', params: {} }) });
+	if (!out.ok) return null;
+	const kinds = (out.result as { kinds?: string[] }).kinds ?? [];
+	kindsCache.set(machineId, { at: Date.now(), kinds });
+	return kinds;
+}
+
+/**
+ * Gives an agent a prompt through Herdr (pasted, then Enter). Herdr refuses while
+ * the agent asks something or isn't ready; `typeIntoPane` sends it regardless.
+ */
+export const promptAgent = (machineId: string, session: string, paneId: string, text: string) =>
+	send(`${sessionUrl(machineId, session)}/call`, { method: 'POST', body: JSON.stringify({ method: 'agent.prompt', params: { target: paneId, text } }) });
+
+/** Types text into a pane as if at its keyboard, optionally pressing Enter. */
+export const typeIntoPane = (machineId: string, session: string, paneId: string, text: string, enter: boolean) =>
+	send(`${sessionUrl(machineId, session)}/call`, {
+		method: 'POST',
+		body: JSON.stringify({ method: 'pane.send_input', params: { pane_id: paneId, text, ...(enter && { keys: ['Enter'] }) } })
+	});
+
+/** Stops the agent in a pane (Ctrl+C until it exits). Resolves whether it stopped. */
+export async function stopAgent(machineId: string, session: string, paneId: string, label: string): Promise<boolean | null> {
+	const out = await runWithResult('Stop agent', `${sessionUrl(machineId, session)}/call`, {
+		method: 'POST',
+		body: JSON.stringify({ method: 'hunthub.agent.stop', params: { pane_id: paneId } })
+	});
+	if (!out.ok) return null;
+	const stopped = !!(out.result as { stopped?: boolean }).stopped;
+	if (stopped) toast.success(`${label} stopped`);
+	return stopped;
+}

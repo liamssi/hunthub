@@ -169,9 +169,13 @@ export function sessionView(
 			workspaceLabel: workspace.label,
 			paneId: a.pane_id,
 			name: a.name || a.display_agent || a.agent || 'agent',
+			kind: a.agent || a.display_agent || null,
+			herdrName: a.name || null,
 			status: a.agent_status ?? 'unknown',
 			cwd: a.foreground_cwd || a.cwd || null,
-			origin: 'external'
+			// HuntHub's runs are matched in afterwards (see herdr/state.ts).
+			origin: 'external',
+			run: null
 		};
 		workspace.agents.push(agent);
 		const pane = panesById.get(a.pane_id);

@@ -13,6 +13,9 @@ import {
 	MUTATING_METHODS,
 	FS_LIST,
 	FS_READ,
+	AGENT_KINDS_INSTALLED,
+	AGENT_LAUNCH,
+	AGENT_STOP,
 	FS_ROOTS,
 	PANE_HISTORY,
 	SESSION_DELETE,
@@ -20,6 +23,7 @@ import {
 	SESSION_STOP,
 	validateSessionName
 } from '@hunthub/shared/console';
+import { installedKinds, parseLaunch, promptWhenReady, startAgent, stopAgent } from './agents';
 import { FsError, listFolder, readFile, rootsFromSnapshot } from './files';
 import { PaneHistory } from './history';
 import { deleteSession, startSession, stopSession } from './sessions';
@@ -335,7 +339,9 @@ export class HerdrGateway {
 
 		const run = () => this.execute(session, method, params);
 		try {
-			const result = MUTATING_METHODS.has(method) ? await this.enqueue(session, run) : await run();
+			// A launch queues only while it changes the session (see launch()).
+			const queued = MUTATING_METHODS.has(method) && method !== AGENT_LAUNCH;
+			const result = queued ? await this.enqueue(session, run) : await run();
 			reply(true, { result });
 		} catch (err) {
 			const error =
@@ -358,6 +364,24 @@ export class HerdrGateway {
 		return next;
 	}
 
+	/**
+	 * Starts an agent. Creating its pane and starting it are queued with the
+	 * session's other changes; waiting for it to be ready for a first prompt
+	 * (up to minutes) is not, so it doesn't hold them up.
+	 */
+	private async launch(session: string, params: Record<string, unknown>) {
+		const p = parseLaunch(params);
+		const { paneId } = await this.enqueue(session, () => startAgent(session, p));
+		if (!p.prompt) return { pane_id: paneId, name: p.name, prompted: false };
+		try {
+			await promptWhenReady(session, p.name, p.prompt);
+			return { pane_id: paneId, name: p.name, prompted: true };
+		} catch (err) {
+			// The agent started; only the prompt didn't go through.
+			return { pane_id: paneId, name: p.name, prompted: false, prompt_error: err instanceof Error ? err.message : String(err) };
+		}
+	}
+
 	private async execute(session: string, method: string, params: Record<string, unknown>): Promise<unknown> {
 		switch (method) {
 			case FS_ROOTS:
@@ -373,6 +397,12 @@ export class HerdrGateway {
 				}
 				return this.history.get(session, paneId);
 			}
+			case AGENT_LAUNCH:
+				return this.launch(session, params);
+			case AGENT_STOP:
+				return stopAgent(session, params);
+			case AGENT_KINDS_INSTALLED:
+				return installedKinds();
 			case SESSION_START: {
 				const result = await startSession(session);
 				this.discover();

@@ -20,6 +20,12 @@
 	import SquareSplitVerticalIcon from '@lucide/svelte/icons/square-split-vertical';
 	import XIcon from '@lucide/svelte/icons/x';
 	import BotIcon from '@lucide/svelte/icons/bot';
+	import MessageSquareIcon from '@lucide/svelte/icons/message-square';
+	import SquareIcon from '@lucide/svelte/icons/square';
+	import UserPlusIcon from '@lucide/svelte/icons/user-plus';
+	import { validateAgentName } from '@hunthub/shared/console';
+	import NewAgentDialog from '$lib/components/agents/new-agent-dialog.svelte';
+	import PromptDialog from '$lib/components/agents/prompt-dialog.svelte';
 	import Columns2Icon from '@lucide/svelte/icons/columns-2';
 	import EyeIcon from '@lucide/svelte/icons/eye';
 	import KeyboardIcon from '@lucide/svelte/icons/keyboard';
@@ -45,7 +51,7 @@
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
 	import { Kbd } from '$lib/components/ui/kbd/index.js';
 	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
-	import { consoleCall, consoleRequest } from '$lib/console';
+	import { adoptAgent, consoleCall, consoleRequest, stopAgent } from '$lib/console';
 	import { prefetchHistory } from '$lib/pane-history';
 	import { appearance, themeColors, workspaceVars } from '$lib/terminal-appearance.svelte';
 	import { cn } from '$lib/utils.js';
@@ -414,10 +420,91 @@
 			onConfirm: () => void call('Close space', 'workspace.close', { workspace_id: w.id })
 		});
 
+	// --- Agents: start, prompt, rename, stop, adopt ------------------------------
+	let newAgentOpen = $state(false);
+	let promptOpen = $state(false);
+	let promptFor = $state<AgentView | null>(null);
+	const agentIn = (paneId: string) => session.workspaces.flatMap((w) => w.agents).find((a) => a.paneId === paneId) ?? null;
+	function openPrompt(a: AgentView) {
+		promptFor = a;
+		promptOpen = true;
+	}
+	const renameAgent = (a: AgentView) =>
+		openForm({
+			title: `Rename ${a.name}`,
+			description: 'Its name in Herdr, which it keeps when the session restarts.',
+			fields: [{ name: 'name', label: 'Name', value: a.herdrName ?? '', required: true, description: 'Lowercase letters, digits, - and _.' }],
+			submitLabel: 'Rename',
+			onSubmit: async (v) => {
+				const invalid = validateAgentName(v.name);
+				if (invalid) {
+					toast.error(invalid);
+					return false;
+				}
+				return call('Rename agent', 'agent.rename', { target: a.paneId, name: v.name });
+			}
+		});
+	const stopAgentIn = (a: AgentView) =>
+		openConfirm({
+			title: `Stop ${a.name}?`,
+			description: 'Sends it Ctrl+C until it exits, as you would at its keyboard. Its pane stays open with a shell; unfinished work in the agent may be lost.',
+			confirmLabel: 'Stop agent',
+			onConfirm: async () => {
+				const stopped = await stopAgent(machineId, session.name, a.paneId, a.name);
+				if (stopped === false) {
+					openConfirm({
+						title: `${a.name} is still running`,
+						description: "It didn't exit on Ctrl+C. Closing its pane ends it, and anything else running in that pane.",
+						confirmLabel: 'Close pane',
+						onConfirm: () => void call('Close pane', 'pane.close', { pane_id: a.paneId })
+					});
+				}
+			}
+		});
+	function agentActions(a: AgentView): Action[][] {
+		return [
+			[
+				{ label: 'Go to agent', icon: BotIcon, run: () => jumpToAgent(a) },
+				{ label: 'Send prompt…', icon: MessageSquareIcon, shortcut: keys('P'), run: () => openPrompt(a) },
+				{ label: 'Rename agent', icon: PencilIcon, run: () => renameAgent(a) },
+				...(a.origin === 'external'
+					? [{ label: 'Adopt', icon: UserPlusIcon, run: () => void adoptAgent(machineId, session.name, a.paneId, a.name) }]
+					: [])
+			],
+			[{ label: 'Stop agent', icon: SquareIcon, destructive: true, run: () => stopAgentIn(a) }]
+		];
+	}
+	/** A new agent's pane: go to it as soon as it shows up in the session. */
+	let arriving = $state<{ paneId: string; until: number } | null>(null);
+	$effect(() => {
+		const target = arriving;
+		if (!target) return;
+		for (const w of session.workspaces) {
+			const t = w.tabs.find((x) => x.panes.some((p) => p.id === target.paneId));
+			if (!t) continue;
+			untrack(() => {
+				arriving = null;
+				selectTab(w.id, t.id);
+				void focusPane(t.id, target.paneId);
+			});
+			return;
+		}
+		if (Date.now() > target.until) untrack(() => (arriving = null));
+	});
+
 	// Menus are lists of groups, shared by right-click and ⋯ menus.
 	function paneActions(t: TabView, paneId: string): Action[][] {
 		const max = maximized[t.id] === paneId;
+		const agent = agentIn(paneId);
 		return [
+			...(agent
+				? [
+						[
+							{ label: 'Send prompt…', icon: MessageSquareIcon, shortcut: keys('P'), run: () => openPrompt(agent) },
+							{ label: 'Stop agent', icon: SquareIcon, run: () => stopAgentIn(agent) }
+						]
+					]
+				: []),
 			[
 				{ label: 'Split right', icon: SquareSplitHorizontalIcon, shortcut: keys('\\'), run: () => void splitPane(t.id, paneId, 'right') },
 				{ label: 'Split down', icon: SquareSplitVerticalIcon, shortcut: keys('-'), run: () => void splitPane(t.id, paneId, 'down') },
@@ -453,6 +540,7 @@
 		return [
 			[
 				{ label: 'New tab', icon: PlusIcon, run: () => void newTab(w.id) },
+				{ label: 'New agent', icon: BotIcon, shortcut: keys('A'), run: () => ((selectedSpaceId = w.id), (newAgentOpen = true)) },
 				{ label: 'Rename space', icon: PencilIcon, run: () => renameSpace(w) },
 				...(w.worktree ? [{ label: 'New worktree', icon: GitBranchIcon, run: () => newWorktree(w) }] : [])
 			],
@@ -658,7 +746,7 @@
 			switcherOpen = !switcherOpen;
 			return;
 		}
-		if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey || form.open || confirm.open) return;
+		if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey || form.open || confirm.open || newAgentOpen || promptOpen) return;
 		if (e.code === 'KeyK') {
 			e.preventDefault();
 			e.stopPropagation();
@@ -688,6 +776,11 @@
 			else historyOpen[paneId] = true;
 		}
 		else if (code === 'KeyT') void newTab(w.id);
+		else if (code === 'KeyA') newAgentOpen = true;
+		else if (code === 'KeyP' && paneId) {
+			const agent = agentIn(paneId);
+			if (agent) openPrompt(agent);
+		}
 		else if (code === 'KeyN') newSpace();
 		else if (code === 'KeyJ') nextAttention();
 		else if (code === 'KeyE') setFilesOpen(!filesOpen);
@@ -712,6 +805,8 @@
 		['Maximize or restore pane', 'Z'],
 		['Close pane', 'X'],
 		['Show or hide history', 'H'],
+		['New agent', 'A'],
+		['Prompt the agent in this pane', 'P'],
 		['Refresh the pane (reconnect and redraw)', 'R'],
 		['Show or hide files', 'E'],
 		['Search in history', 'F'],
@@ -806,22 +901,52 @@
 
 {#snippet agentRow(a: AgentView, showSpace: boolean)}
 	{@const current = !!tab && activePane[tab.id] === a.paneId && tab.panes.some((p) => p.id === a.paneId)}
-	<button
-		type="button"
-		class={cn(
-			'flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-			current && 'bg-sidebar-accent text-sidebar-accent-foreground'
-		)}
-		aria-current={current ? 'true' : undefined}
-		onclick={() => jumpToAgent(a)}
-		title="Go to {a.name}"
-	>
-		<StatusBadge status={a.status} compact />
-		<span class="flex min-w-0 flex-col">
-			<span class="truncate font-medium">{a.name}</span>
-			{#if showSpace}<span class="truncate text-xs text-muted-foreground">{a.workspaceLabel}</span>{/if}
-		</span>
-	</button>
+	{@const by = a.run ? `${a.run.adopted ? 'adopted' : 'started'} by ${a.run.by ?? 'someone'}` : null}
+	{@const detail = [showSpace ? a.workspaceLabel : null, by].filter(Boolean).join(' · ')}
+	<ContextMenu.Root>
+		<ContextMenu.Trigger>
+			{#snippet child({ props })}
+				<div
+					{...props}
+					class={cn(
+						'group/agent flex min-w-0 items-center rounded-md transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+						current && 'bg-sidebar-accent text-sidebar-accent-foreground'
+					)}
+				>
+					<button
+						type="button"
+						class="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+						aria-current={current ? 'true' : undefined}
+						onclick={() => jumpToAgent(a)}
+						title={`Go to ${a.name}${a.kind && a.kind !== a.name ? ` (${a.kind})` : ''}${by ? `, ${by} in HuntHub` : ''}`}
+					>
+						<StatusBadge status={a.status} compact />
+						<span class="flex min-w-0 flex-col">
+							<span class="truncate font-medium">{a.name}</span>
+							{#if detail}<span class="truncate text-xs text-muted-foreground">{detail}</span>{/if}
+						</span>
+					</button>
+					<DropdownMenu.Root>
+						<DropdownMenu.Trigger>
+							{#snippet child({ props: menuProps })}
+								<Button
+									{...menuProps}
+									size="icon-sm"
+									variant="ghost"
+									class="me-0.5 size-6 opacity-0 group-hover/agent:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+									aria-label="{a.name} actions"
+								>
+									<EllipsisIcon />
+								</Button>
+							{/snippet}
+						</DropdownMenu.Trigger>
+						<DropdownMenu.Content align="start" class="w-52">{@render dropdownItems(agentActions(a))}</DropdownMenu.Content>
+					</DropdownMenu.Root>
+				</div>
+			{/snippet}
+		</ContextMenu.Trigger>
+		<ContextMenu.Content class="w-52">{@render contextItems(agentActions(a))}</ContextMenu.Content>
+	</ContextMenu.Root>
 {/snippet}
 
 <!-- The workspace is always dark, like the terminals it holds. -->
@@ -973,8 +1098,11 @@
 				{#if sidebarList === 'separate'}
 					<section class="flex flex-col gap-0.5 border-t p-2" aria-labelledby="agents-heading">
 						<div class="flex h-7 items-center px-2">
-							<h2 id="agents-heading" class="text-xs font-medium text-muted-foreground">Agents</h2>
-							{#if agents.length}<span class="ms-auto text-xs text-muted-foreground tabular-nums">{agents.length}</span>{/if}
+							<h2 id="agents-heading" class="me-auto text-xs font-medium text-muted-foreground">Agents</h2>
+							{#if agents.length}<span class="text-xs text-muted-foreground tabular-nums">{agents.length}</span>{/if}
+							<Button size="icon-sm" variant="ghost" class="size-6" aria-label="New agent" title="New agent ({keys('A')})" onclick={() => (newAgentOpen = true)}>
+								<PlusIcon />
+							</Button>
 						</div>
 						{#each agents as a (a.paneId)}
 							{@render agentRow(a, true)}
@@ -1338,6 +1466,15 @@
 	</div>
 </div>
 
+<NewAgentDialog
+	bind:open={newAgentOpen}
+	{machineId}
+	{session}
+	spaceId={space?.id ?? null}
+	paneId={tab ? (activePane[tab.id] ?? rectsFor(tab)[0]?.paneId ?? null) : null}
+	onstarted={(paneId) => (arriving = { paneId, until: Date.now() + 15_000 })}
+/>
+<PromptDialog bind:open={promptOpen} agent={promptFor ? (agentIn(promptFor.paneId) ?? promptFor) : null} />
 <FormDialog bind:open={form.open} title={form.title} description={form.description} fields={form.fields} submitLabel={form.submitLabel} onSubmit={form.onSubmit} />
 <ConfirmDialog bind:open={confirm.open} title={confirm.title} description={confirm.description} confirmLabel={confirm.confirmLabel} onConfirm={confirm.onConfirm} />
 

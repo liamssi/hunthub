@@ -27,9 +27,12 @@ test('interprets a real Herdr snapshot', () => {
 			workspaceLabel: 'demo-ws',
 			paneId: 'w1:p1',
 			name: 'test-bot',
+			kind: 'test-bot',
+			herdrName: null,
 			status: 'working',
 			cwd: '/tmp',
-			origin: 'external'
+			origin: 'external',
+			run: null
 		}
 	]);
 });
@@ -89,9 +92,12 @@ test('agents needing attention come first', () => {
 		workspaceLabel: 'w',
 		paneId,
 		name: 'a',
+		kind: 'a',
+		herdrName: null,
 		status,
 		cwd: null,
-		origin: 'external'
+		origin: 'external',
+		run: null
 	});
 	const sorted = sortAgents([agent('idle', '1'), agent('working', '2'), agent('blocked', '3'), agent('done', '4')]);
 	expect(sorted.map((a) => a.status)).toEqual(['blocked', 'working', 'done', 'idle']);
