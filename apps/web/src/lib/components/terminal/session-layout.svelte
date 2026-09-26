@@ -234,6 +234,14 @@
 	}
 	/** Live rows left visible under the history panel. */
 	const LIVE_ROWS = 6;
+	/** Each pane's live terminal (the history panel reads the rows still visible under it). */
+	let views = $state<Record<string, TerminalView | undefined>>({});
+	/** The pinned history panel ends exactly where the live rows below it begin. */
+	function historyHeight(paneId: string): string {
+		void appearance.size; // Re-measured when the font size changes.
+		const top = views[paneId]?.bottomRowsTop(LIVE_ROWS);
+		return top ? `${top}px` : `calc(100% - ${Math.round(appearance.size * 1.1 * LIVE_ROWS) + 18}px)`;
+	}
 
 	/** Per pane: watch instead of control, or take control over from its current controller. */
 	let paneMode = $state<Record<string, 'watch' | 'takeover'>>({});
@@ -1271,13 +1279,21 @@
 									{#if historyOpen[r.paneId]}
 										<div
 											class="absolute inset-x-0 top-0 z-10"
-											style:height={isPinned(r.paneId) ? `calc(100% - ${Math.round(appearance.size * 1.1 * LIVE_ROWS) + 8}px)` : '100%'}
+											style:height={isPinned(r.paneId) ? historyHeight(r.paneId) : '100%'}
 										>
-											<HistoryPanel {machineId} session={session.name} paneId={r.paneId} search={historySearch[r.paneId] ?? false} onclose={() => closeHistory(r.paneId)} />
+											<HistoryPanel
+												{machineId}
+												session={session.name}
+												paneId={r.paneId}
+												search={historySearch[r.paneId] ?? false}
+												liveRows={isPinned(r.paneId) ? () => views[r.paneId]?.bottomRows(LIVE_ROWS) ?? [] : undefined}
+												onclose={() => closeHistory(r.paneId)}
+											/>
 										</div>
 									{/if}
 									{#key `${r.paneId}:${mode}:${transport}:${attempts[r.paneId] ?? 0}`}
 										<TerminalView
+											bind:this={views[r.paneId]}
 											{machineId}
 											session={session.name}
 											target={r.paneId}

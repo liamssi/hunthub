@@ -8,7 +8,9 @@
 	import ArrowDownToLineIcon from '@lucide/svelte/icons/arrow-down-to-line';
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import ChevronUpIcon from '@lucide/svelte/icons/chevron-up';
+	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
 	import SearchIcon from '@lucide/svelte/icons/search';
+	import { cn } from '$lib/utils.js';
 	import type { SearchAddon } from '@xterm/addon-search';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { copyText, openWebLink } from '$lib/clipboard';
@@ -23,8 +25,43 @@
 		session,
 		paneId,
 		search: searchOnOpen = false,
+		liveRows,
 		onclose
-	}: { machineId: string; session: string; paneId: string; search?: boolean; onclose: () => void } = $props();
+	}: {
+		machineId: string;
+		session: string;
+		paneId: string;
+		search?: boolean;
+		/** The live rows left visible below the panel (pinned prompt); history stops where they begin. */
+		liveRows?: () => string[];
+		onclose: () => void;
+	} = $props();
+
+	/** Newer output exists that couldn't be added in place (a program redrew its screen). */
+	let stale = $state(false);
+	let redraw: (() => void) | null = null;
+
+	const plain = (line: string) =>
+		line
+			.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+			.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+			.replace(/\x1b[()][0-9A-Za-z]/g, '')
+			.trimEnd();
+
+	/**
+	 * History ends with the pane's current screen; under a pinned prompt the
+	 * live rows already show its last part, so those lines are left out.
+	 */
+	function withoutLiveTail(lines: string[]): string[] {
+		const live = liveRows?.() ?? [];
+		const first = live.map((l) => l.trimEnd()).find((l) => l.length >= 2);
+		if (!first) return lines;
+		const stop = Math.max(0, lines.length - live.length - 3);
+		for (let i = lines.length - 1; i >= stop; i--) {
+			if (plain(lines[i]!).startsWith(first)) return lines.slice(0, i);
+		}
+		return lines;
+	}
 
 	// Search through the history (Ctrl+F in the panel, or opened with Alt+Shift+F).
 	let searchOpen = $state(false);
@@ -70,12 +107,31 @@
 
 		const atEnd = () => !term || term.buffer.active.viewportY >= term.buffer.active.baseY;
 
-		/** Shows history text: redrawn only when it changed, and never while you're reading further up. */
-		function show(text: string, first: boolean) {
-			if (!term || text === lastText || (!first && !atEnd())) return;
+		/**
+		 * Shows history. The first time it's drawn in full; after that new output is
+		 * only added in place (no redraw, so no flicker). When a program redrew its
+		 * screen instead, a Refresh button offers the full redraw.
+		 */
+		let latest = '';
+		function draw(text: string) {
+			if (!term) return;
 			lastText = text;
+			stale = false;
 			term.reset();
 			term.write(text, () => term?.scrollToBottom());
+		}
+		redraw = () => draw(latest);
+		function show(historyText: string, first: boolean) {
+			if (!term) return;
+			const text = withoutLiveTail(historyText.split('\r\n')).join('\r\n');
+			latest = text;
+			if (first) return draw(text);
+			if (text === lastText) return;
+			if (text.startsWith(lastText)) {
+				const follow = atEnd();
+				term.write(text.slice(lastText.length), () => follow && term?.scrollToBottom());
+				lastText = text;
+			} else stale = true;
 		}
 
 		async function load(first: boolean) {
@@ -187,7 +243,12 @@
 		<HistoryIcon class="size-3.5" aria-hidden="true" />
 		<span>{loading ? 'Loading history…' : 'History'}</span>
 		<span class="hidden sm:inline">· scroll to the end or press Esc to return</span>
-		<Button size="sm" variant="ghost" class="ms-auto h-5 px-1.5 text-xs" onclick={openSearch} aria-label="Search history" title="Search (Ctrl+F)">
+		{#if stale}
+			<Button size="sm" variant="ghost" class="ms-auto h-5 px-1.5 text-xs text-foreground" onclick={() => redraw?.()} title="Show the newest output">
+				<RefreshCwIcon data-icon="inline-start" />Refresh
+			</Button>
+		{/if}
+		<Button size="sm" variant="ghost" class={cn('h-5 px-1.5 text-xs', !stale && 'ms-auto')} onclick={openSearch} aria-label="Search history" title="Search (Ctrl+F)">
 			<SearchIcon data-icon="inline-start" />Search
 		</Button>
 		<Button size="sm" variant="ghost" class="h-5 px-1.5 text-xs" onclick={onclose}>
@@ -217,5 +278,5 @@
 			<Button size="icon-sm" variant="ghost" class="size-6" aria-label="Next match" title="Next (Enter)" onclick={() => find('next')}><ChevronDownIcon /></Button>
 		</div>
 	{/if}
-	<div bind:this={container} class="min-h-0 flex-1 ps-1.5 pt-1"></div>
+	<div bind:this={container} class="min-h-0 flex-1 ps-1.5 pt-1 pb-1.5"></div>
 </div>

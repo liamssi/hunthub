@@ -85,6 +85,30 @@
 	/** The live terminal, for appearance changes; set while connected. */
 	let live: { term: Terminal; refit: () => void } | null = null;
 
+	/**
+	 * Where the last `count` rows begin, in pixels from the top of this terminal's box,
+	 * so something laid over the rest ends exactly on a row boundary.
+	 */
+	export function bottomRowsTop(count: number): number | null {
+		const term = live?.term;
+		const screen = container?.querySelector<HTMLElement>('.xterm-screen');
+		if (!term || !screen || !term.rows) return null;
+		const rowHeight = screen.clientHeight / term.rows;
+		return Math.round(screen.offsetTop + Math.max(0, term.rows - count) * rowHeight);
+	}
+
+	/** The text of the last `count` rows on screen (e.g. what stays visible under a history panel). */
+	export function bottomRows(count: number): string[] {
+		const term = live?.term;
+		if (!term) return [];
+		const buffer = term.buffer.active;
+		const out: string[] = [];
+		for (let y = Math.max(0, term.rows - count); y < term.rows; y++) {
+			out.push(buffer.getLine(buffer.viewportY + y)?.translateToString(true) ?? '');
+		}
+		return out;
+	}
+
 	/** Waits for the chosen font, so xterm measures its cells with the real glyphs. */
 	async function fontReady() {
 		try {
@@ -287,6 +311,6 @@
 <div
 	bind:this={container}
 	data-phase={state.phase}
-	class="size-full overflow-hidden ps-1.5 pt-1"
+	class="size-full overflow-hidden ps-1.5 pt-1 pb-2.5"
 	style:background-color={themeColors(appearance.theme).background}
 ></div>
