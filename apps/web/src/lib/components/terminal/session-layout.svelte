@@ -581,12 +581,11 @@
 
 			<div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
 				<section class="flex flex-col gap-0.5 p-2" aria-labelledby="spaces-heading">
-					<div class="flex h-7 items-center justify-between px-2">
-						<h2 id="spaces-heading" class="text-xs font-medium text-muted-foreground">Spaces</h2>
+					<div class="flex h-7 items-center gap-1.5 px-2">
 						<ToggleGroup.Root
 							type="single"
 							size="sm"
-							class="ms-auto me-1"
+							class="-ms-1"
 							aria-label="Sidebar layout"
 							bind:value={
 								() => sidebarList,
@@ -604,6 +603,7 @@
 								<ListTreeIcon />
 							</ToggleGroup.Item>
 						</ToggleGroup.Root>
+						<h2 id="spaces-heading" class="me-auto text-xs font-medium text-muted-foreground">Spaces</h2>
 						<Button size="icon-sm" variant="ghost" class="size-6" aria-label="New space" title="New space ({keys('N')})" onclick={newSpace}>
 							<PlusIcon />
 						</Button>
