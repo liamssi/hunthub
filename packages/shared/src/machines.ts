@@ -1,4 +1,5 @@
 // Machine data shared by the API responses, the browser live channel and the UI.
+import type { ConsolePolicy } from './console';
 import type { HostInfo, StatsSample } from './runner-protocol';
 
 export type MachineStatus = 'active' | 'disabled';
@@ -21,6 +22,8 @@ export type Machine = {
 	stats: StatsSample | null;
 	/** Agents in Herdr right now; null when unknown (offline or no Herdr reporting). */
 	agents: number | null;
+	/** What the console may do on this machine (set by an admin). */
+	consolePolicy: ConsolePolicy;
 };
 
 // Herdr sessions and agents, as the hub interprets the runner's reports.

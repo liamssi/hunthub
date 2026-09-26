@@ -7,7 +7,9 @@ import {
 	type RunnerMessage,
 	serverMessageSchema
 } from '@hunthub/shared/runner-protocol';
+import { policyAllows, TERMINAL_CONTROL } from '@hunthub/shared/console';
 import { markRevoked, saveCredential } from './config';
+import { setHubPolicy } from './policy';
 import { HerdrGateway } from './herdr/gateway';
 import { TerminalManager } from './herdr/terminals';
 import { collectHostInfo } from './host';
@@ -118,7 +120,7 @@ export function runConnection({ hubUrl, log, ...opts }: Options): Promise<void> 
 				switch (msg.type) {
 					case 'welcome': {
 						attempt = 0;
-						log(`connected to ${hubUrl} as machine ${msg.machineId}`);
+						log(`connected to ${hubUrl} as machine ${msg.machineId} (console access: ${setHubPolicy(msg.policy)})`);
 						collector.sample(); // prime rate counters
 						applyTimings(msg.heartbeatIntervalMs, msg.statsIntervalMs);
 						gateway?.stop();
@@ -144,6 +146,12 @@ export function runConnection({ hubUrl, log, ...opts }: Options): Promise<void> 
 								}
 							}, 60_000)
 						);
+						break;
+					}
+					case 'policy': {
+						const policy = setHubPolicy(msg.policy);
+						log(`console access is now ${policy}`);
+						if (!policyAllows(policy, TERMINAL_CONTROL)) terminals?.closeControlling();
 						break;
 					}
 					case 'credential.rotate':

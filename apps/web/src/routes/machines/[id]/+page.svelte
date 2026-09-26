@@ -1,6 +1,7 @@
 <script lang="ts">
 	import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
 	import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
+	import { CONSOLE_POLICY_INFO } from '@hunthub/shared/console';
 	import type { Machine, MachineHerdrView } from '@hunthub/shared/machines';
 	import SessionsCard from '$lib/components/agents/sessions-card.svelte';
 	import { goto } from '$app/navigation';
@@ -47,6 +48,9 @@
 		<div class="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
 			<span>{machine.host?.hostname ?? 'Not connected yet'}</span>
 			{#each machine.tags as tag (tag)}<Badge variant="outline">{tag}</Badge>{/each}
+			{#if machine.consolePolicy !== 'full'}
+				<Badge variant="secondary" title={CONSOLE_POLICY_INFO[machine.consolePolicy].description}>Console: {CONSOLE_POLICY_INFO[machine.consolePolicy].label}</Badge>
+			{/if}
 			{#if !online}<span>· last seen {formatRelative(machine.lastSeenAt)}</span>{/if}
 		</div>
 	</div>

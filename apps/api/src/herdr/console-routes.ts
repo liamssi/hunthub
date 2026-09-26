@@ -15,6 +15,10 @@ import {
 	SESSION_DELETE,
 	SESSION_START,
 	SESSION_STOP,
+	CONSOLE_POLICY_INFO,
+	parsePolicy,
+	policyAllows,
+	TERMINAL_CONTROL,
 	validateAgentName,
 	validateSessionName
 } from '@hunthub/shared/console';
@@ -43,7 +47,7 @@ export function redact(value: unknown, depth = 0): unknown {
 	return value;
 }
 
-type Outcome = { status: 200 | 400 | 404 | 409 | 504; body: Record<string, unknown> };
+type Outcome = { status: 200 | 400 | 403 | 404 | 409 | 504; body: Record<string, unknown> };
 
 async function runConsoleCall(
 	userId: string,
@@ -56,9 +60,11 @@ async function runConsoleCall(
 	const invalid = validateSessionName(session);
 	if (invalid) return { status: 400, body: { error: 'invalid_name', message: invalid } };
 
-	const [row] = await db.select({ id: machine.id, status: machine.status }).from(machine).where(eq(machine.id, machineId));
+	const [row] = await db.select({ id: machine.id, status: machine.status, policy: machine.consolePolicy }).from(machine).where(eq(machine.id, machineId));
 	if (!row) return { status: 404, body: { error: 'not_found' } };
 	if (row.status !== 'active') return { status: 409, body: { error: 'disabled', message: 'The machine is disabled.' } };
+	const policy = parsePolicy(row.policy) ?? 'full';
+	if (!policyAllows(policy, method)) return { status: 403, body: { error: 'not_allowed', message: notAllowed(policy) } };
 
 	const mutating = MUTATING_METHODS.has(method);
 	// Starting or stopping waits for Herdr; a launch with a first prompt waits for the agent too.
@@ -129,6 +135,9 @@ const terminalQuery = z.object({
 });
 
 const sessionParam = (c: { req: { param: (k: string) => string } }) => decodeURIComponent(c.req.param('session'));
+
+const notAllowed = (policy: Parameters<typeof policyAllows>[0]) =>
+	`This machine's console access is "${CONSOLE_POLICY_INFO[policy].label}", which doesn't allow that. An admin can change it on the machine's page.`;
 
 /** A running session to reach Herdr's machine-wide features through (the default one first). */
 function integrationSession(machineId: string): string | null {
@@ -271,6 +280,11 @@ export const consoleRoutes = new Hono<{ Variables: AuthVariables }>()
 			const invalid = validateSessionName(q.data.session);
 			if (invalid) return c.json({ error: 'invalid_name', message: invalid }, 400);
 			if (q.data.view === 'pane' && !q.data.target) return c.json({ error: 'invalid_query', message: 'Which pane?' }, 400);
+			if (q.data.mode === 'control') {
+				const [row] = await db.select({ policy: machine.consolePolicy }).from(machine).where(eq(machine.id, c.req.param('id')));
+				const policy = parsePolicy(row?.policy) ?? 'full';
+				if (!policyAllows(policy, TERMINAL_CONTROL)) return c.json({ error: 'not_allowed', message: notAllowed(policy) }, 403);
+			}
 			const capability = q.data.view === 'session' ? 'session' : q.data.transport;
 			if (!hasCapability(c.req.param('id'), `terminal:${capability}`)) {
 				return c.json({ error: 'unsupported', message: `This machine's runner doesn't support this terminal (${capability}). Update the runner.` }, 409);

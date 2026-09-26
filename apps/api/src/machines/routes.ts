@@ -1,6 +1,7 @@
 import { desc, eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
+import { CONSOLE_POLICIES, parsePolicy } from '@hunthub/shared/console';
 import type { JoinTokenCreated, Machine, StatsRange } from '@hunthub/shared/machines';
 import { RUNNER_CLOSE } from '@hunthub/shared/runner-protocol';
 import { db } from '../db';
@@ -11,7 +12,7 @@ import { publish } from '../live/hub';
 import { callHerdr, HerdrCallError } from '../herdr/calls';
 import { agentCount, machineHerdr, renameMachine } from '../herdr/state';
 import { connectionSettings, connectionSettingsSchema, saveConnectionSettings } from './connection-settings';
-import { broadcastSettings, isOnline, kick, latestStats, startRotation } from './registry';
+import { broadcastSettings, isOnline, kick, latestStats, sendToMachine, startRotation } from './registry';
 import { getRetention, querySeries, setRetention } from './stats';
 
 export const JOIN_TOKEN_TTL_MS = 60 * 60 * 1000;
@@ -32,7 +33,8 @@ export function toMachineDto(row: typeof machine.$inferSelect): Machine {
 		lastSeenAt: row.lastSeenAt?.toISOString() ?? null,
 		createdAt: row.createdAt.toISOString(),
 		stats: latestStats(row.id),
-		agents: agentCount(row.id)
+		agents: agentCount(row.id),
+		consolePolicy: parsePolicy(row.consolePolicy) ?? 'full'
 	};
 }
 
@@ -117,13 +119,15 @@ export const machineRoutes = new Hono<{ Variables: AuthVariables }>()
 	})
 	.patch('/:id', requireAdmin, async (c) => {
 		const body = z
-			.object({ name: nameSchema.optional(), tags: tagsSchema.optional() })
+			.object({ name: nameSchema.optional(), tags: tagsSchema.optional(), consolePolicy: z.enum(CONSOLE_POLICIES).optional() })
 			.safeParse(await c.req.json().catch(() => null));
 		if (!body.success) return c.json({ error: 'invalid_body', issues: body.error.issues }, 400);
 		const existing = await findMachine(c.req.param('id'));
 		if (!existing) return c.json({ error: 'not_found' }, 404);
 		const [row] = await db.update(machine).set(body.data).where(eq(machine.id, existing.id)).returning();
 		if (body.data.name) renameMachine(row!.id, row!.name);
+		// The runner enforces it too, so it hears about the change right away.
+		if (body.data.consolePolicy) sendToMachine(row!.id, { type: 'policy', policy: body.data.consolePolicy });
 		broadcastUpdated(row!);
 		return c.json({ machine: toMachineDto(row!) });
 	})

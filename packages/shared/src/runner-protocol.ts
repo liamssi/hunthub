@@ -1,6 +1,7 @@
 // Messages exchanged between a machine's runner and the HuntHub API over the
 // runner WebSocket. Both sides validate every message with these schemas.
 import { z } from 'zod';
+import { CONSOLE_POLICIES } from './console';
 
 /** Bump when a change is not backward compatible; the server rejects mismatches. */
 export const RUNNER_PROTOCOL_VERSION = 1;
@@ -108,9 +109,13 @@ export const serverMessageSchema = z.discriminatedUnion('type', [
 		machineId: z.string(),
 		serverVersion: z.string(),
 		statsIntervalMs: z.number().int().positive(),
-		heartbeatIntervalMs: z.number().int().positive()
+		heartbeatIntervalMs: z.number().int().positive(),
+		/** What the console may do on this machine (see console.ts); the runner may cap it further. */
+		policy: z.enum(CONSOLE_POLICIES).default('full')
 	}),
 	z.object({ type: z.literal('error'), code: z.enum(runnerErrorCodes), message: z.string() }),
+	/** The machine's console access changed. */
+	z.object({ type: z.literal('policy'), policy: z.enum(CONSOLE_POLICIES) }),
 	z.object({ type: z.literal('credential.rotate'), credential: z.string() }),
 	/** Run a Herdr API call in a session (the runner enforces an allowlist). */
 	z.object({

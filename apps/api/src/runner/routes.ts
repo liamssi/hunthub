@@ -12,6 +12,7 @@ import {
 	enrollRequestSchema,
 	runnerMessageSchema
 } from '@hunthub/shared/runner-protocol';
+import { parsePolicy } from '@hunthub/shared/console';
 import { db } from '../db';
 import { machine, machineJoinToken } from '../db/schema';
 import { clientIp } from '../lib/client-ip';
@@ -139,10 +140,12 @@ export const runnerRoutes = new Hono<{ Variables: RunnerVariables }>()
 							publicIp,
 							capabilities: msg.capabilities
 						});
+						const [policyRow] = await db.select({ policy: machine.consolePolicy }).from(machine).where(eq(machine.id, machineId));
 						send(ws, {
 							type: 'welcome',
 							machineId,
 							serverVersion,
+							policy: parsePolicy(policyRow?.policy) ?? 'full',
 							statsIntervalMs: connectionSettings().statsIntervalMs,
 							heartbeatIntervalMs: connectionSettings().heartbeatIntervalMs
 						});

@@ -29,6 +29,8 @@ export const machine = pgTable(
 		name: text('name').notNull(),
 		tags: text('tags').array().notNull().default(sql`'{}'::text[]`),
 		status: text('status').notNull().default('active'),
+		/** What the console may do here: read | manage | agents | full (see console.ts). */
+		consolePolicy: text('console_policy').notNull().default('full'),
 		/** SHA-256 of the machine credential; the credential itself is never stored. */
 		credentialHash: text('credential_hash').notNull().unique(),
 		host: jsonb('host').$type<HostInfo>(),
@@ -41,6 +43,7 @@ export const machine = pgTable(
 	},
 	(t) => [
 		check('machine_status_check', sql`${t.status} in ('active', 'disabled')`),
+		check('machine_console_policy_check', sql`${t.consolePolicy} in ('read', 'manage', 'agents', 'full')`),
 		check('machine_name_length', sql`length(${t.name}) between 1 and 100`),
 		index('machine_created_by_idx').on(t.createdBy)
 	]

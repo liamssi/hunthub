@@ -123,3 +123,14 @@ Decided without a check-in (the user asked for the next stages to go ahead overn
 - **Console methods:** `agent.start/prompt/send_keys/rename` and `pane.send_input/send_keys` are allowed and audited like other changes (the audit no longer blanks `keys`, which are key names like Ctrl+C).
 - **UI:** New agent dialog (sidebar Agents "+", space menu, Alt+Shift+A), agent menus (Go to, Send prompt…, Rename, Adopt, Stop) on agent rows and agent panes, Alt+Shift+P to prompt the agent in the focused pane, and "started/adopted by" under agents in the sidebar.
 - **Testing rule:** never start an installed agent kind in tests (a PATH-shadowing fake still launched the real Codex once); use uninstalled kinds, mocked requests, or simulated agents (`pane.report_agent`).
+
+## Administration as built (M3d, 2026-09-27)
+
+Decided without a check-in, like M3c.
+
+- **Console access per machine** (`machine.console_policy`, admins set it from the machine's ⋯ menu): Read only < Layout < Agents < Full (default). Each console method maps to the level it needs (`policyNeeded` in `packages/shared/src/console.ts`): reads and file browsing need Read; sessions, spaces, tabs, panes and worktrees need Layout; agents and integrations need Agents; typing into a terminal (`terminal.control`) needs Full.
+- **Enforced twice:** the hub refuses (403, with a message naming the level) and the runner refuses on its own. The hub sends the level in `welcome` and a `policy` message when it changes; the runner closes its typing terminals when Full is taken away.
+- **Machine cap:** `HUNTHUB_CONSOLE_POLICY=<level>` in the runner's environment caps what the hub can allow (the stricter wins), so a machine owner can make it read-only whatever the hub says.
+- **Integrations:** the machine page lists Herdr's agent integrations (`integration.list` through any running session; they belong to the machine's user) with install, update and remove, each confirmed and audited. Agents not on the machine are folded away.
+- Roles (who may change what) are still later: every signed-in user has the machine's console access; only admins change it.
+

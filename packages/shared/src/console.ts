@@ -153,3 +153,50 @@ export function validateSessionName(name: string): string | null {
 	if (!/^[A-Za-z0-9._-]+$/.test(name)) return "Session name may only contain letters, numbers, '.', '_' and '-'.";
 	return null;
 }
+
+// --- Console access per machine ------------------------------------------------
+
+/**
+ * How much the console may do on a machine, set by an admin (and optionally
+ * capped on the machine itself). Each level includes the ones before it:
+ * read (watch terminals, read state and files), manage (sessions, spaces,
+ * tabs, panes, worktrees), agents (start, prompt, stop, integrations), full
+ * (type into terminals, which can run anything).
+ */
+export const CONSOLE_POLICIES = ['read', 'manage', 'agents', 'full'] as const;
+export type ConsolePolicy = (typeof CONSOLE_POLICIES)[number];
+
+export const CONSOLE_POLICY_INFO: Record<ConsolePolicy, { label: string; description: string }> = {
+	read: { label: 'Read only', description: 'Watch terminals and read sessions, agents and files. Nothing can be changed.' },
+	manage: { label: 'Layout', description: 'Also start and stop sessions and manage spaces, tabs, panes and worktrees.' },
+	agents: { label: 'Agents', description: 'Also start, prompt and stop agents, and install agent integrations.' },
+	full: { label: 'Full', description: 'Also type into terminals (which can run anything on the machine).' }
+};
+
+/** Controlling a terminal (typing into it); needs full access. */
+export const TERMINAL_CONTROL = 'terminal.control';
+
+const rank = (p: ConsolePolicy) => CONSOLE_POLICIES.indexOf(p);
+const MANAGE_SET: ReadonlySet<string> = new Set<string>([...MANAGE_METHODS, ...LIFECYCLE_METHODS]);
+const AGENT_SET: ReadonlySet<string> = new Set<string>([...AGENT_METHODS, AGENT_LAUNCH, AGENT_STOP, ...INTEGRATION_METHODS]);
+
+/** The least access a console method needs. */
+export function policyNeeded(method: string): ConsolePolicy {
+	if (MANAGE_SET.has(method)) return 'manage';
+	if (AGENT_SET.has(method)) return 'agents';
+	if (method === TERMINAL_CONTROL || !CONSOLE_METHODS.has(method)) return 'full';
+	return 'read';
+}
+
+export function policyAllows(policy: ConsolePolicy, method: string): boolean {
+	return rank(policy) >= rank(policyNeeded(method));
+}
+
+/** The stricter of two policies (the hub's setting and the machine's own cap). */
+export function stricterPolicy(a: ConsolePolicy, b: ConsolePolicy): ConsolePolicy {
+	return rank(a) <= rank(b) ? a : b;
+}
+
+export function parsePolicy(value: unknown): ConsolePolicy | null {
+	return typeof value === 'string' && (CONSOLE_POLICIES as readonly string[]).includes(value) ? (value as ConsolePolicy) : null;
+}

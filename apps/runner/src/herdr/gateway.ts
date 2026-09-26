@@ -18,11 +18,13 @@ import {
 	AGENT_STOP,
 	FS_ROOTS,
 	PANE_HISTORY,
+	policyAllows,
 	SESSION_DELETE,
 	SESSION_START,
 	SESSION_STOP,
 	validateSessionName
 } from '@hunthub/shared/console';
+import { consolePolicy } from '../policy';
 import { installedKinds, parseLaunch, promptWhenReady, startAgent, stopAgent } from './agents';
 import { FsError, listFolder, readFile, rootsFromSnapshot } from './files';
 import { PaneHistory } from './history';
@@ -326,7 +328,7 @@ export class HerdrGateway {
 		const reply = (ok: boolean, body: { result?: unknown; error?: { code: string; message: string } }) =>
 			this.send({ type: 'herdr.result', id, ok, ...body });
 
-		if (!CONSOLE_METHODS.has(method)) {
+		if (!CONSOLE_METHODS.has(method) || !policyAllows(consolePolicy(), method)) {
 			return reply(false, { error: { code: 'not_allowed', message: `${method} is not allowed on this machine` } });
 		}
 		// The session name becomes part of a socket path. Starting may name a new

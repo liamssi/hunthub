@@ -1,0 +1,2 @@
+ALTER TABLE "machine" ADD COLUMN "console_policy" text DEFAULT 'full' NOT NULL;--> statement-breakpoint
+ALTER TABLE "machine" ADD CONSTRAINT "machine_console_policy_check" CHECK ("machine"."console_policy" in ('read', 'manage', 'agents', 'full'));

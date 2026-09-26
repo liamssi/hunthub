@@ -16,6 +16,8 @@ import {
 	type ServerMessage,
 	type TerminalFrame
 } from '@hunthub/shared/runner-protocol';
+import { policyAllows, TERMINAL_CONTROL } from '@hunthub/shared/console';
+import { consolePolicy } from '../policy';
 import { EndpointTerminalSession } from '../vendor/roamgate/endpoint-terminal-session';
 import { DEFAULT_SESSION, socketPathFor } from './client';
 
@@ -34,6 +36,8 @@ interface Channel {
 
 export class TerminalManager {
 	private channels = new Map<string, Channel>();
+	/** Channels that can type into their terminal. */
+	private controlling = new Set<string>();
 
 	constructor(
 		private readonly send: Send,
@@ -49,6 +53,8 @@ export class TerminalManager {
 		if (this.channels.has(msg.channel)) return fail('Channel already open.');
 		if (this.channels.size >= MAX_TERMINALS) return fail('Too many open terminals on this machine.');
 		if (!this.sessionExists(msg.session)) return fail(`No Herdr session named ${msg.session}.`);
+		if (msg.mode === 'control' && !policyAllows(consolePolicy(), TERMINAL_CONTROL)) return fail('Typing into terminals is not allowed on this machine.');
+		if (msg.mode === 'control') this.controlling.add(msg.channel);
 		if (msg.view === 'session') {
 			// Herdr's client would start a stopped session itself, outside the runner's lifecycle management.
 			if (!this.sessionRunning(msg.session)) return fail(`Session ${msg.session} is stopped. Start it first.`);
@@ -73,6 +79,12 @@ export class TerminalManager {
 
 	close(channel: string) {
 		this.channels.get(channel)?.close();
+		this.controlling.delete(channel);
+	}
+
+	/** Closes the terminals that can type (console access no longer allows it). */
+	closeControlling() {
+		for (const channel of this.controlling) this.close(channel);
 	}
 
 	closeAll() {

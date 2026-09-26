@@ -1,7 +1,10 @@
 <script lang="ts">
 	import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
 	import { toast } from 'svelte-sonner';
+	import CheckIcon from '@lucide/svelte/icons/check';
+	import { CONSOLE_POLICIES, CONSOLE_POLICY_INFO, type ConsolePolicy } from '@hunthub/shared/console';
 	import type { Machine } from '@hunthub/shared/machines';
+	import { cn } from '$lib/utils.js';
 	import { goto } from '$app/navigation';
 	import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -13,6 +16,8 @@
 	let { machine }: { machine: Machine } = $props();
 
 	let editOpen = $state(false);
+	let accessOpen = $state(false);
+	let access = $state<ConsolePolicy>('full');
 	let name = $state('');
 	let tags = $state('');
 	let confirm = $state<'disable' | 'remove' | null>(null);
@@ -59,6 +64,18 @@
 		}
 	}
 
+	function openAccess() {
+		access = machine.consolePolicy;
+		accessOpen = true;
+	}
+
+	async function saveAccess() {
+		if (await call('', { method: 'PATCH', body: JSON.stringify({ consolePolicy: access }) })) {
+			accessOpen = false;
+			toast.success(`Console access on ${machine.name}: ${CONSOLE_POLICY_INFO[access].label}`);
+		}
+	}
+
 	async function enable() {
 		if (await call('/enable', { method: 'POST' })) toast.success(`${machine.name} enabled`);
 	}
@@ -93,6 +110,7 @@
 	<DropdownMenu.Content align="end">
 		<DropdownMenu.Group>
 			<DropdownMenu.Item onSelect={openEdit}>Rename or tag</DropdownMenu.Item>
+			<DropdownMenu.Item onSelect={openAccess}>Console access…</DropdownMenu.Item>
 			<DropdownMenu.Item disabled={machine.connection !== 'online'} onSelect={rotate}>Rotate credential</DropdownMenu.Item>
 		</DropdownMenu.Group>
 		<DropdownMenu.Separator />
@@ -106,6 +124,43 @@
 		</DropdownMenu.Group>
 	</DropdownMenu.Content>
 </DropdownMenu.Root>
+
+<Dialog.Root bind:open={accessOpen}>
+	<Dialog.Content class="sm:max-w-md">
+		<Dialog.Header>
+			<Dialog.Title>Console access on {machine.name}</Dialog.Title>
+			<Dialog.Description>
+				What anyone may do on this machine through HuntHub. Each level includes the ones above it. The runner enforces it too, and a machine can
+				be capped locally with HUNTHUB_CONSOLE_POLICY.
+			</Dialog.Description>
+		</Dialog.Header>
+		<div class="flex flex-col gap-2" role="radiogroup" aria-label="Console access">
+			{#each CONSOLE_POLICIES as p (p)}
+				{@const selected = access === p}
+				<button
+					type="button"
+					role="radio"
+					aria-checked={selected}
+					class={cn(
+						'flex items-start gap-3 rounded-lg border p-3 text-start outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring',
+						selected ? 'border-foreground/60 bg-muted/50' : 'hover:border-foreground/30'
+					)}
+					onclick={() => (access = p)}
+				>
+					<span class="flex min-w-0 flex-1 flex-col gap-0.5">
+						<span class="text-sm font-medium">{CONSOLE_POLICY_INFO[p].label}</span>
+						<span class="text-xs text-muted-foreground">{CONSOLE_POLICY_INFO[p].description}</span>
+					</span>
+					{#if selected}<CheckIcon class="mt-0.5 size-4 shrink-0" aria-hidden="true" />{/if}
+				</button>
+			{/each}
+		</div>
+		<Dialog.Footer>
+			<Button variant="outline" onclick={() => (accessOpen = false)}>Cancel</Button>
+			<Button disabled={busy || access === machine.consolePolicy} onclick={saveAccess}>Save</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
 
 <Dialog.Root bind:open={editOpen}>
 	<Dialog.Content class="sm:max-w-md">
