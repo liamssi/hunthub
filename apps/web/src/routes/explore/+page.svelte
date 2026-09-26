@@ -6,6 +6,7 @@
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 	import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
 	import LayersIcon from '@lucide/svelte/icons/layers';
+	import MessageSquareIcon from '@lucide/svelte/icons/message-square';
 	import LayoutGridIcon from '@lucide/svelte/icons/layout-grid';
 	import ListIcon from '@lucide/svelte/icons/list';
 	import PinIcon from '@lucide/svelte/icons/pin';
@@ -14,12 +15,15 @@
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import ServerIcon from '@lucide/svelte/icons/server';
+	import SquareIcon from '@lucide/svelte/icons/square';
 	import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal';
+	import UserPlusIcon from '@lucide/svelte/icons/user-plus';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { validateSessionName } from '@hunthub/shared/console';
-	import type { AgentStatus, Machine, PaneView, SessionView, TabView, WorkspaceView } from '@hunthub/shared/machines';
+	import type { AgentStatus, AgentView, Machine, PaneView, SessionView, TabView, WorkspaceView } from '@hunthub/shared/machines';
 	import StatusBadge, { statusLabels } from '$lib/components/agents/status-badge.svelte';
+	import PromptDialog from '$lib/components/agents/prompt-dialog.svelte';
 	import ConfirmDialog from '$lib/components/console/confirm-dialog.svelte';
 	import FormDialog from '$lib/components/console/form-dialog.svelte';
 	import { Badge } from '$lib/components/ui/badge/index.js';
@@ -31,7 +35,7 @@
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import { Spinner } from '$lib/components/ui/spinner/index.js';
 	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
-	import { startSession, stopSession } from '$lib/console';
+	import { adoptAgent, startSession, stopAgent, stopSession } from '$lib/console';
 	import { fleet, needsYouCount, sessionAgents, workspaceHref } from '$lib/fleet.svelte';
 	import { findPin, togglePin } from '$lib/pins.svelte';
 	import { cn } from '$lib/utils.js';
@@ -197,6 +201,12 @@
 	// --- Actions ---------------------------------------------------------------------
 	let newSession = $state<{ open: boolean; machine: Machine | null }>({ open: false, machine: null });
 	let confirmStop = $state<{ open: boolean; machine: Machine | null; session: string }>({ open: false, machine: null, session: '' });
+	// Agents: prompt, stop and adopt without opening the session.
+	let promptOpen = $state(false);
+	let promptFor = $state<AgentView | null>(null);
+	let confirmStopAgent = $state<{ open: boolean; agent: AgentView | null }>({ open: false, agent: null });
+	const liveAgent = (a: AgentView) =>
+		fleet.herdr[a.machineId]?.sessions.find((s) => s.name === a.session)?.workspaces.flatMap((w) => w.agents).find((x) => x.paneId === a.paneId) ?? a;
 	// A stopped session starts and then opens in the workspace.
 	let startingKeys = $state<Record<string, boolean>>({});
 	async function startAndOpen(machine: Machine, name: string, key: string) {
@@ -289,6 +299,28 @@
 	{/each}
 {/snippet}
 
+{#snippet agentMenu(a: AgentView)}
+	<DropdownMenu.Root>
+		<DropdownMenu.Trigger>
+			{#snippet child({ props })}
+				<Button {...props} size="icon-sm" variant="ghost" aria-label="{a.name} actions"><EllipsisIcon /></Button>
+			{/snippet}
+		</DropdownMenu.Trigger>
+		<DropdownMenu.Content align="end" class="w-48">
+			<DropdownMenu.Group>
+				<DropdownMenu.Item onSelect={() => ((promptFor = a), (promptOpen = true))}><MessageSquareIcon />Send prompt…</DropdownMenu.Item>
+				{#if a.origin === 'external'}
+					<DropdownMenu.Item onSelect={() => void adoptAgent(a.machineId, a.session, a.paneId, a.name)}><UserPlusIcon />Adopt</DropdownMenu.Item>
+				{/if}
+			</DropdownMenu.Group>
+			<DropdownMenu.Separator />
+			<DropdownMenu.Group>
+				<DropdownMenu.Item variant="destructive" onSelect={() => (confirmStopAgent = { open: true, agent: a })}><SquareIcon />Stop agent</DropdownMenu.Item>
+			</DropdownMenu.Group>
+		</DropdownMenu.Content>
+	</DropdownMenu.Root>
+{/snippet}
+
 {#snippet item(r: Row, card: boolean)}
 	{#if r.kind === 'session'}
 		{@const running = r.session.state === 'running'}
@@ -328,6 +360,7 @@
 		{/if}
 	{:else if r.kind === 'pane'}
 		{@const agent = r.pane.agent}
+		{@const agentView = r.space.agents.find((a) => a.paneId === r.pane.id) ?? null}
 		{@const href = workspaceHref(r.machine.id, r.session.name, r.pane.id)}
 		{@const where = [r.space.label, `Tab ${r.tab.label}`, group !== 'session' ? r.session.name : null, group !== 'machine' && group !== 'session' ? r.machine.name : null].filter(Boolean).join(' · ')}
 		{#if card}
@@ -340,6 +373,7 @@
 					<span class="truncate text-xs text-muted-foreground">{where}</span>
 				</div>
 				{@render pinButton(r.machine.id, r.session.name, r.pane.id, agent?.name ?? `Shell · ${folder(r.pane.cwd)}`)}
+				{#if agentView}{@render agentMenu(agentView)}{/if}
 			</div>
 			<div class="flex min-w-0 items-center gap-2 text-xs">
 				{#if agent}<StatusBadge status={agent.status} />{/if}
@@ -357,6 +391,7 @@
 			</div>
 			<span class="hidden max-w-56 shrink-0 truncate font-mono text-xs text-muted-foreground md:inline" title={r.pane.cwd ?? undefined}>{folder(r.pane.cwd)}</span>
 			{@render pinButton(r.machine.id, r.session.name, r.pane.id, agent?.name ?? `Shell · ${folder(r.pane.cwd)}`)}
+			{#if agentView}{@render agentMenu(agentView)}{/if}
 			<Button size="sm" variant="outline" {href}>Open</Button>
 		{/if}
 	{:else}
@@ -562,3 +597,16 @@
 	confirmLabel="Stop session"
 	onConfirm={() => confirmStop.machine && stopSession(confirmStop.machine.id, confirmStop.session)}
 />
+<ConfirmDialog
+	bind:open={confirmStopAgent.open}
+	title="Stop {confirmStopAgent.agent?.name ?? 'agent'}?"
+	description="Sends it Ctrl+C until it exits, as you would at its keyboard. Its pane stays open with a shell; unfinished work in the agent may be lost."
+	confirmLabel="Stop agent"
+	onConfirm={async () => {
+		const a = confirmStopAgent.agent;
+		if (!a) return;
+		const stopped = await stopAgent(a.machineId, a.session, a.paneId, a.name);
+		if (stopped === false) toast.warning(`${a.name} is still running`, { description: "It didn't exit on Ctrl+C. Open its session to close the pane." });
+	}}
+/>
+<PromptDialog bind:open={promptOpen} agent={promptFor ? liveAgent(promptFor) : null} />
