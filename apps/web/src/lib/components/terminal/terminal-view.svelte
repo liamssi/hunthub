@@ -10,6 +10,7 @@
 	// hub from the machine's runner. Frames are ANSI written to xterm.js as they arrive.
 	import '@xterm/xterm/css/xterm.css';
 	import type { Terminal } from '@xterm/xterm';
+	import { untrack } from 'svelte';
 
 	let {
 		machineId,
@@ -57,7 +58,30 @@
 		return out;
 	}
 
+	// One connection per set of connection parameters. Everything else (callbacks,
+	// this terminal's own state) is read untracked, so updates never reconnect.
 	$effect(() => {
+		const params = { machineId, session, view, target, mode, transport, takeover };
+		return untrack(() => connect(params));
+	});
+
+	function connect({
+		machineId,
+		session,
+		view,
+		target,
+		mode,
+		transport,
+		takeover
+	}: {
+		machineId: string;
+		session: string;
+		view: TerminalViewKind;
+		target: string;
+		mode: TerminalMode;
+		transport: TerminalTransport;
+		takeover: boolean;
+	}) {
 		let disposed = false;
 		let term: Terminal | null = null;
 		let ws: WebSocket | null = null;
@@ -155,7 +179,7 @@
 			ws?.close();
 			term?.dispose();
 		};
-	});
+	}
 </script>
 
-<div bind:this={container} class="size-full overflow-hidden rounded-md bg-[#0b0b0c] p-1"></div>
+<div bind:this={container} data-phase={state.phase} class="size-full overflow-hidden rounded-md bg-[#0b0b0c] p-1"></div>

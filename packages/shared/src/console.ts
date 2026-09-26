@@ -28,6 +28,8 @@ export const MANAGE_METHODS = [
 	'pane.split',
 	'pane.rename',
 	'pane.close',
+	'pane.zoom',
+	'layout.set_split_ratio',
 	'worktree.create',
 	'worktree.open',
 	'worktree.remove'

@@ -15,7 +15,7 @@ test('interprets a real Herdr snapshot', () => {
 			id: 'w1:t1',
 			label: '1',
 			panes: [{ id: 'w1:p1', cwd: '/tmp', agent: { name: 'test-bot', status: 'working' } }],
-			layout: { zoomed: false, focusedPaneId: 'w1:p1', panes: [{ paneId: 'w1:p1', x: 0, y: 0, width: 1, height: 1 }] }
+			layout: { zoomed: false, focusedPaneId: 'w1:p1', panes: [{ paneId: 'w1:p1', x: 0, y: 0, width: 1, height: 1 }], splits: [] }
 		}
 	]);
 	expect(ws.agents).toEqual([
@@ -44,6 +44,11 @@ test('tab layouts become fractions of the tab area; a broken layout is ignored',
 				panes: [
 					{ pane_id: 'w1:p1', rect: { x: 0, y: 1, width: 50, height: 40 } },
 					{ pane_id: 'w1:p2', rect: { x: 50, y: 21, width: 50, height: 20 } }
+				],
+				splits: [
+					{ id: 'split_0_root', direction: 'right', ratio: 0.5, rect: { x: 0, y: 1, width: 100, height: 40 } },
+					{ id: 'split_1_1', direction: 'down', ratio: 0.5, rect: { x: 50, y: 1, width: 50, height: 40 } },
+					{ id: 'weird', direction: 'down', ratio: 0.5, rect: { x: 0, y: 1, width: 1, height: 1 } }
 				]
 			}
 		]
@@ -54,6 +59,10 @@ test('tab layouts become fractions of the tab area; a broken layout is ignored',
 		panes: [
 			{ paneId: 'w1:p1', x: 0, y: 0, width: 0.5, height: 1 },
 			{ paneId: 'w1:p2', x: 0.5, y: 0.5, width: 0.5, height: 0.5 }
+		],
+		splits: [
+			{ path: [], direction: 'right', ratio: 0.5, x: 0, y: 0, width: 1, height: 1 },
+			{ path: [true], direction: 'down', ratio: 0.5, x: 0.5, y: 0, width: 0.5, height: 1 }
 		]
 	});
 	const broken = sessionView(machine, { name: 't', state: 'running', snapshot: { ...snapshot, layouts: 'nope' } });

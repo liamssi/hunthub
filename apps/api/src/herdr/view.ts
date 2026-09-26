@@ -3,7 +3,7 @@
 // unknown fields are ignored and missing optional ones tolerated, so newer
 // Herdr versions keep working.
 import { z } from 'zod';
-import type { AgentStatus, AgentView, PaneView, SessionView, TabView, WorkspaceView } from '@hunthub/shared/machines';
+import type { AgentStatus, AgentView, PaneView, SessionView, SplitView, TabView, WorkspaceView } from '@hunthub/shared/machines';
 
 const statusSchema = z
 	.string()
@@ -66,13 +66,23 @@ const snapshotSchema = z.object({
 				zoomed: z.boolean().optional(),
 				focused_pane_id: z.string().nullish(),
 				area: rectSchema,
-				panes: z.array(z.object({ pane_id: z.string(), rect: rectSchema })).default([])
+				panes: z.array(z.object({ pane_id: z.string(), rect: rectSchema })).default([]),
+				splits: z
+					.array(z.object({ id: z.string(), direction: z.enum(['right', 'down']), ratio: z.number(), rect: rectSchema }))
+					.default([])
 			})
 		)
 		.default([])
 		// A malformed layout must not hide the rest of the session.
 		.catch([])
 });
+
+/** Herdr names splits `split_<n>_root` or `split_<n>_<path as 0/1 digits>`. */
+export function splitPath(id: string): boolean[] | null {
+	const m = /^split_\d+_(root|[01]+)$/.exec(id);
+	if (!m) return null;
+	return m[1] === 'root' ? [] : [...m[1]!].map((c) => c === '1');
+}
 
 type MachineRef = { id: string; name: string };
 
@@ -123,7 +133,22 @@ export function sessionView(
 				y: (p.rect.y - y) / height,
 				width: p.rect.width / width,
 				height: p.rect.height / height
-			}))
+			})),
+			splits: l.splits.flatMap((sp): SplitView[] => {
+				const path = splitPath(sp.id);
+				if (!path) return [];
+				return [
+					{
+						path,
+						direction: sp.direction,
+						ratio: sp.ratio,
+						x: (sp.rect.x - x) / width,
+						y: (sp.rect.y - y) / height,
+						width: sp.rect.width / width,
+						height: sp.rect.height / height
+					}
+				];
+			})
 		};
 	}
 	const panesById = new Map<string, PaneView>();

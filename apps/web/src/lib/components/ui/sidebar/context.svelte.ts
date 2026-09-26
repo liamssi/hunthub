@@ -42,6 +42,8 @@ class SidebarState {
 
 	// Event handler to apply to the `<svelte:window>`
 	handleShortcutKeydown = (e: KeyboardEvent) => {
+		// HuntHub: keys typed into a terminal belong to it (Ctrl+B is tmux's and Claude Code's).
+		if (e.target instanceof Element && e.target.closest('.xterm')) return;
 		if (e.key === SIDEBAR_KEYBOARD_SHORTCUT && (e.metaKey || e.ctrlKey)) {
 			e.preventDefault();
 			this.toggle();

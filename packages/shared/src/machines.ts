@@ -52,12 +52,27 @@ export type PaneView = {
 /** Where a pane sits in its tab, as fractions (0-1) of the tab area. */
 export type PaneRect = { paneId: string; x: number; y: number; width: number; height: number };
 
+/**
+ * One divider of a tab's split tree. `path` addresses it for Herdr's
+ * `layout.set_split_ratio` (false = first child, true = second, from the root);
+ * the rect (fractions of the tab area) is the region the split divides.
+ */
+export type SplitView = {
+	path: boolean[];
+	direction: 'right' | 'down';
+	ratio: number;
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+};
+
 export type TabView = {
 	id: string;
 	label: string;
 	panes: PaneView[];
 	/** The tab's split layout as Herdr last reported it; null if unknown. */
-	layout: { zoomed: boolean; focusedPaneId: string | null; panes: PaneRect[] } | null;
+	layout: { zoomed: boolean; focusedPaneId: string | null; panes: PaneRect[]; splits: SplitView[] } | null;
 };
 
 export type WorkspaceView = {
