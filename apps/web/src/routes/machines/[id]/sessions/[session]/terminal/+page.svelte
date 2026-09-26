@@ -5,6 +5,8 @@
 	import { onMount } from 'svelte';
 	import EllipsisVerticalIcon from '@lucide/svelte/icons/ellipsis-vertical';
 	import EyeIcon from '@lucide/svelte/icons/eye';
+	import FullscreenIcon from '@lucide/svelte/icons/fullscreen';
+	import MinimizeIcon from '@lucide/svelte/icons/minimize';
 	import RotateCwIcon from '@lucide/svelte/icons/rotate-cw';
 	import type { MachineHerdrView } from '@hunthub/shared/machines';
 	import SessionLayout from '$lib/components/terminal/session-layout.svelte';
@@ -39,6 +41,16 @@
 		};
 	});
 
+	// The workspace is a dark surface; the whole page (app rail, menus) follows while it's open.
+	onMount(() => {
+		const html = document.documentElement;
+		const added = !html.classList.contains('dark');
+		if (added) html.classList.add('dark');
+		return () => {
+			if (added) html.classList.remove('dark');
+		};
+	});
+
 	// Per-browser conveniences: the last view and transport.
 	const load = (key: string) => {
 		try {
@@ -63,6 +75,16 @@
 		transport = load('hunthub.terminal.transport') === 'native' ? 'native' : 'cli';
 	});
 
+	// Browser full screen for the whole workspace.
+	let root = $state<HTMLElement>();
+	let fullscreen = $state(false);
+	onMount(() => {
+		const sync = () => (fullscreen = document.fullscreenElement === root);
+		document.addEventListener('fullscreenchange', sync);
+		return () => document.removeEventListener('fullscreenchange', sync);
+	});
+	const toggleFullscreen = () => (fullscreen ? document.exitFullscreen() : root?.requestFullscreen())?.catch(() => {});
+
 	let mode = $state<TerminalMode>('control');
 	let attempt = $state(0);
 	let termState = $state<TerminalState>({ phase: 'connecting' });
@@ -70,101 +92,108 @@
 
 <svelte:head><title>{data.sessionName} · {data.machine.name} · HuntHub</title></svelte:head>
 
-<div class="flex h-svh flex-col">
-	<header class="flex h-11 shrink-0 items-center gap-2 border-b px-2">
-		<Sidebar.Trigger />
-		<Separator orientation="vertical" class="data-[orientation=vertical]:h-4" />
-		<nav class="flex min-w-0 items-center gap-1.5 text-sm" aria-label="Breadcrumb">
-			<a href="/machines/{data.machine.id}" class="truncate text-muted-foreground hover:text-foreground">{data.machine.name}</a>
-			<span class="text-muted-foreground" aria-hidden="true">/</span>
-			<a href={sessionHref} class="truncate font-medium hover:underline">{data.sessionName}</a>
-		</nav>
-		{#if session && session.state !== 'running'}
-			<Badge variant="outline">Stopped</Badge>
-		{/if}
-		{#if mode === 'observe'}
-			<Badge variant="secondary" class="gap-1"><EyeIcon />Watching</Badge>
-		{/if}
-		{#if view === 'herdr' && termState.phase === 'closed'}
-			<span class="min-w-0 truncate text-sm text-muted-foreground" title={termState.reason}>{termState.reason ?? 'Closed.'}</span>
-			<Button size="sm" variant="ghost" onclick={() => attempt++}><RotateCwIcon data-icon="inline-start" />Reconnect</Button>
-		{:else if view === 'herdr' && termState.phase === 'connecting'}
-			<span class="text-sm text-muted-foreground">Connecting…</span>
-		{/if}
+{#snippet breadcrumb()}
+	<Sidebar.Trigger />
+	<Separator orientation="vertical" class="data-[orientation=vertical]:h-4" />
+	<nav class="flex min-w-0 items-center gap-1.5 text-sm" aria-label="Breadcrumb">
+		<a href="/machines/{data.machine.id}" class="truncate text-muted-foreground hover:text-foreground">{data.machine.name}</a>
+		<span class="text-muted-foreground" aria-hidden="true">/</span>
+		<a href={sessionHref} class="truncate font-medium hover:underline">{data.sessionName}</a>
+	</nav>
+{/snippet}
 
-		<div class="ms-auto flex items-center gap-1">
-			<ToggleGroup.Root
-				type="single"
-				size="sm"
-				variant="outline"
-				bind:value={
-					() => view,
-					(v) => {
-						// Clicking the active option would clear it; one view is always shown.
-						if (v !== 'herdr' && v !== 'layout') return;
-						view = v;
-						save('hunthub.session.view', v);
+{#snippet controls()}
+	{#if mode === 'observe'}
+		<Badge variant="secondary" class="gap-1"><EyeIcon />Watching</Badge>
+	{/if}
+	<ToggleGroup.Root
+		type="single"
+		size="sm"
+		variant="outline"
+		bind:value={
+			() => view,
+			(v) => {
+				// Clicking the active option would clear it; one view is always shown.
+				if (v !== 'herdr' && v !== 'layout') return;
+				view = v;
+				save('hunthub.session.view', v);
+			}
+		}
+		aria-label="Session view"
+	>
+		<ToggleGroup.Item value="layout">Workspace</ToggleGroup.Item>
+		<ToggleGroup.Item value="herdr">Herdr UI</ToggleGroup.Item>
+	</ToggleGroup.Root>
+	<Button size="icon-sm" variant="ghost" aria-label={fullscreen ? 'Exit full screen' : 'Full screen'} title={fullscreen ? 'Exit full screen' : 'Full screen'} onclick={toggleFullscreen}>
+		{#if fullscreen}<MinimizeIcon />{:else}<FullscreenIcon />{/if}
+	</Button>
+	<DropdownMenu.Root>
+		<DropdownMenu.Trigger>
+			{#snippet child({ props })}
+				<Button {...props} size="icon-sm" variant="ghost" aria-label="Session options"><EllipsisVerticalIcon /></Button>
+			{/snippet}
+		</DropdownMenu.Trigger>
+		<DropdownMenu.Content align="end" class="w-60">
+			<DropdownMenu.Group>
+				<DropdownMenu.CheckboxItem bind:checked={() => mode === 'observe', (v) => ((mode = v ? 'observe' : 'control'), attempt++)}>
+					Watch only
+				</DropdownMenu.CheckboxItem>
+			</DropdownMenu.Group>
+			<DropdownMenu.Separator />
+			<DropdownMenu.Group>
+				<DropdownMenu.GroupHeading>Pane connection</DropdownMenu.GroupHeading>
+				<DropdownMenu.RadioGroup
+					bind:value={
+						() => transport,
+						(v) => {
+							transport = v === 'native' ? 'native' : 'cli';
+							save('hunthub.terminal.transport', transport);
+						}
 					}
-				}
-				aria-label="Session view"
-			>
-				<ToggleGroup.Item value="layout">Workspace</ToggleGroup.Item>
-				<ToggleGroup.Item value="herdr">Herdr UI</ToggleGroup.Item>
-			</ToggleGroup.Root>
-			<DropdownMenu.Root>
-				<DropdownMenu.Trigger>
-					{#snippet child({ props })}
-						<Button {...props} size="icon-sm" variant="ghost" aria-label="Session options"><EllipsisVerticalIcon /></Button>
-					{/snippet}
-				</DropdownMenu.Trigger>
-				<DropdownMenu.Content align="end" class="w-60">
-					<DropdownMenu.Group>
-						<DropdownMenu.CheckboxItem
-							bind:checked={() => mode === 'observe', (v) => ((mode = v ? 'observe' : 'control'), attempt++)}
-						>
-							Watch only
-						</DropdownMenu.CheckboxItem>
-					</DropdownMenu.Group>
-					<DropdownMenu.Separator />
-					<DropdownMenu.Group>
-						<DropdownMenu.GroupHeading>Pane connection</DropdownMenu.GroupHeading>
-						<DropdownMenu.RadioGroup
-							bind:value={
-								() => transport,
-								(v) => {
-									transport = v === 'native' ? 'native' : 'cli';
-									save('hunthub.terminal.transport', transport);
-								}
-							}
-						>
-							<DropdownMenu.RadioItem value="cli">Herdr CLI</DropdownMenu.RadioItem>
-							<DropdownMenu.RadioItem value="native">Native protocol</DropdownMenu.RadioItem>
-						</DropdownMenu.RadioGroup>
-					</DropdownMenu.Group>
-					<DropdownMenu.Separator />
-					<DropdownMenu.Group>
-						<DropdownMenu.Item>
-							{#snippet child({ props })}<a {...props} href={sessionHref}>Manage session</a>{/snippet}
-						</DropdownMenu.Item>
-					</DropdownMenu.Group>
-				</DropdownMenu.Content>
-			</DropdownMenu.Root>
-		</div>
-	</header>
+				>
+					<DropdownMenu.RadioItem value="cli">Herdr CLI</DropdownMenu.RadioItem>
+					<DropdownMenu.RadioItem value="native">Native protocol</DropdownMenu.RadioItem>
+				</DropdownMenu.RadioGroup>
+			</DropdownMenu.Group>
+			<DropdownMenu.Separator />
+			<DropdownMenu.Group>
+				<DropdownMenu.Item>
+					{#snippet child({ props })}<a {...props} href={sessionHref}>Manage session</a>{/snippet}
+				</DropdownMenu.Item>
+			</DropdownMenu.Group>
+		</DropdownMenu.Content>
+	</DropdownMenu.Root>
+{/snippet}
 
-	<div class="min-h-0 flex-1">
-		{#if view === 'herdr'}
-			<div class="size-full p-1">
-				{#key `${mode}:${attempt}`}
-					<TerminalView machineId={data.machine.id} session={data.sessionName} view="session" {mode} transport="cli" bind:state={termState} />
-				{/key}
-			</div>
-		{:else if session?.state === 'running'}
-			<SessionLayout machineId={data.machine.id} {session} {mode} {transport} />
-		{:else}
-			<p class="p-4 text-sm text-muted-foreground">
-				The session isn't running on the machine. <a href={sessionHref} class="underline">Start it from the session page.</a>
-			</p>
-		{/if}
-	</div>
+<div bind:this={root} class="flex h-svh flex-col bg-background">
+	{#if view === 'layout' && session?.state === 'running'}
+		<SessionLayout machineId={data.machine.id} {session} {mode} {transport} header={breadcrumb} {controls} />
+	{:else}
+		<header class="flex h-10 shrink-0 items-center gap-2 border-b px-2">
+			{@render breadcrumb()}
+			{#if session && session.state !== 'running'}
+				<Badge variant="outline">Stopped</Badge>
+			{/if}
+			{#if view === 'herdr' && termState.phase === 'closed'}
+				<span class="min-w-0 truncate text-sm text-muted-foreground" title={termState.reason}>{termState.reason ?? 'Closed.'}</span>
+				<Button size="sm" variant="ghost" onclick={() => attempt++}><RotateCwIcon data-icon="inline-start" />Reconnect</Button>
+			{:else if view === 'herdr' && termState.phase === 'connecting'}
+				<span class="text-sm text-muted-foreground">Connecting…</span>
+			{/if}
+			<div class="ms-auto flex items-center gap-1">{@render controls()}</div>
+		</header>
+		<div class="min-h-0 flex-1">
+			{#if view === 'herdr'}
+				<div class="size-full bg-[#0a0a0a]">
+					{#key `${mode}:${attempt}`}
+						<TerminalView machineId={data.machine.id} session={data.sessionName} view="session" {mode} transport="cli" bind:state={termState} />
+					{/key}
+				</div>
+			{:else}
+				<p class="p-4 text-sm text-muted-foreground">
+					The session isn't running on the machine. <a href={sessionHref} class="underline">Start it from the session page.</a>
+				</p>
+			{/if}
+		</div>
+	{/if}
 </div>

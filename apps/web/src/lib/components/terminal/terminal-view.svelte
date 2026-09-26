@@ -61,8 +61,9 @@
 	// One connection per set of connection parameters. Everything else (callbacks,
 	// this terminal's own state) is read untracked, so updates never reconnect.
 	$effect(() => {
-		const params = { machineId, session, view, target, mode, transport, takeover };
-		return untrack(() => connect(params));
+		const params = { machineId, session, view, target, mode, transport };
+		// Taking over only matters when a connection starts; clearing it afterwards must not reconnect.
+		return untrack(() => connect({ ...params, takeover }));
 	});
 
 	function connect({
@@ -98,7 +99,8 @@
 				fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
 				fontSize: 13,
 				scrollback: 0,
-				theme: { background: '#0b0b0c', foreground: '#e4e4e7', cursor: '#e4e4e7' }
+				// Matches the dark theme's --background, so a pane and its terminal read as one surface.
+				theme: { background: '#0a0a0a', foreground: '#e5e5e5', cursor: '#e5e5e5', selectionBackground: '#3b82f666' }
 			});
 			const fit = new FitAddon();
 			term.loadAddon(fit);
@@ -182,4 +184,4 @@
 	}
 </script>
 
-<div bind:this={container} data-phase={state.phase} class="size-full overflow-hidden rounded-md bg-[#0b0b0c] p-1"></div>
+<div bind:this={container} data-phase={state.phase} class="size-full overflow-hidden bg-[#0a0a0a] ps-1.5 pt-1"></div>
