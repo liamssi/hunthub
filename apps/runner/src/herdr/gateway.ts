@@ -52,10 +52,30 @@ const RETRY_MS = 3000;
 const DISCOVER_MS = 5000;
 
 /** Fields that change with terminal output or focus; ignored when deciding whether to report. */
-const VOLATILE = new Set(['revision', 'scroll', 'terminal_title', 'terminal_title_stripped', 'focused', 'layouts']);
+const VOLATILE = new Set(['revision', 'scroll', 'terminal_title', 'terminal_title_stripped', 'focused']);
+
+type LayoutLike = { tab_id?: unknown; zoomed?: unknown; splits?: { direction?: unknown; ratio?: unknown }[] };
+
+/**
+ * Layout rects change whenever any client resizes; only the split structure
+ * (directions and ratios, rounded) and zoom count as a change.
+ */
+function layoutShape(layouts: unknown): unknown {
+	if (!Array.isArray(layouts)) return layouts;
+	return layouts.map((l: LayoutLike) => ({
+		tab: l?.tab_id,
+		zoomed: l?.zoomed,
+		splits: Array.isArray(l?.splits)
+			? l.splits.map((s) => [s?.direction, typeof s?.ratio === 'number' ? Math.round(s.ratio * 50) / 50 : s?.ratio])
+			: []
+	}));
+}
 
 export function meaningfulJson(snapshot: unknown): string {
-	return JSON.stringify(snapshot, (key, value) => (VOLATILE.has(key) ? undefined : value));
+	return JSON.stringify(snapshot, (key, value) => {
+		if (key === 'layouts') return layoutShape(value);
+		return VOLATILE.has(key) ? undefined : value;
+	});
 }
 
 /** Panes that currently host an agent, from a snapshot. */

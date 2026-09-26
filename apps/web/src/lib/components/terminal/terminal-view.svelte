@@ -19,7 +19,8 @@
 		mode,
 		transport,
 		takeover = false,
-		state = $bindable<TerminalState>({ phase: 'connecting' })
+		state = $bindable<TerminalState>({ phase: 'connecting' }),
+		onstatechange
 	}: {
 		machineId: string;
 		session: string;
@@ -29,7 +30,14 @@
 		transport: TerminalTransport;
 		takeover?: boolean;
 		state?: TerminalState;
+		/** For parents that track many terminals (binding would need a slot per terminal up front). */
+		onstatechange?: (state: TerminalState) => void;
 	} = $props();
+
+	function setState(next: TerminalState) {
+		state = next;
+		onstatechange?.(next);
+	}
 
 	let container: HTMLDivElement;
 
@@ -55,7 +63,7 @@
 		let ws: WebSocket | null = null;
 		let observer: ResizeObserver | null = null;
 		let resizeTimer: ReturnType<typeof setTimeout> | undefined;
-		state = { phase: 'connecting' };
+		setState({ phase: 'connecting' });
 
 		void (async () => {
 			const [{ Terminal }, { FitAddon }] = await Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')]);
@@ -96,18 +104,18 @@
 					return;
 				}
 				if (msg.type === 'frame' && msg.bytes) {
-					if (state.phase !== 'live') state = { phase: 'live' };
+					if (state.phase !== 'live') setState({ phase: 'live' });
 					term?.write(fromBase64(msg.bytes));
 				} else if (msg.type === 'closed') {
-					state = { phase: 'closed', reason: msg.reason };
+					setState({ phase: 'closed', reason: msg.reason });
 				}
 			};
 			ws.onclose = (event) => {
 				if (disposed || state.phase === 'closed') return;
-				state = {
+				setState({
 					phase: 'closed',
 					reason: event.code === 1006 ? "Couldn't connect to the terminal (the machine may not support it)." : event.reason || 'Disconnected.'
-				};
+				});
 			};
 
 			if (mode === 'control') {

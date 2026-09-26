@@ -9,6 +9,8 @@ const statusSchema = z
 	.string()
 	.transform((s): AgentStatus => (['working', 'blocked', 'done', 'idle'].includes(s) ? (s as AgentStatus) : 'unknown'));
 
+const rectSchema = z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() });
+
 const snapshotSchema = z.object({
 	workspaces: z
 		.array(
@@ -56,7 +58,20 @@ const snapshotSchema = z.object({
 				foreground_cwd: z.string().optional()
 			})
 		)
+		.default([]),
+	layouts: z
+		.array(
+			z.object({
+				tab_id: z.string(),
+				zoomed: z.boolean().optional(),
+				focused_pane_id: z.string().nullish(),
+				area: rectSchema,
+				panes: z.array(z.object({ pane_id: z.string(), rect: rectSchema })).default([])
+			})
+		)
 		.default([])
+		// A malformed layout must not hide the rest of the session.
+		.catch([])
 });
 
 type MachineRef = { id: string; name: string };
@@ -91,9 +106,25 @@ export function sessionView(
 	for (const t of parsed.data.tabs) {
 		const workspace = byId.get(t.workspace_id);
 		if (!workspace) continue;
-		const tab: TabView = { id: t.tab_id, label: t.label || String(t.number ?? t.tab_id), panes: [] };
+		const tab: TabView = { id: t.tab_id, label: t.label || String(t.number ?? t.tab_id), panes: [], layout: null };
 		workspace.tabs.push(tab);
 		tabsById.set(tab.id, tab);
+	}
+	for (const l of parsed.data.layouts) {
+		const tab = tabsById.get(l.tab_id);
+		const { x, y, width, height } = l.area;
+		if (!tab || width <= 0 || height <= 0) continue;
+		tab.layout = {
+			zoomed: l.zoomed ?? false,
+			focusedPaneId: l.focused_pane_id ?? null,
+			panes: l.panes.map((p) => ({
+				paneId: p.pane_id,
+				x: (p.rect.x - x) / width,
+				y: (p.rect.y - y) / height,
+				width: p.rect.width / width,
+				height: p.rect.height / height
+			}))
+		};
 	}
 	const panesById = new Map<string, PaneView>();
 	for (const p of parsed.data.panes) {

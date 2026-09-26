@@ -49,10 +49,15 @@ export type PaneView = {
 	agent: { name: string; status: AgentStatus } | null;
 };
 
+/** Where a pane sits in its tab, as fractions (0-1) of the tab area. */
+export type PaneRect = { paneId: string; x: number; y: number; width: number; height: number };
+
 export type TabView = {
 	id: string;
 	label: string;
 	panes: PaneView[];
+	/** The tab's split layout as Herdr last reported it; null if unknown. */
+	layout: { zoomed: boolean; focusedPaneId: string | null; panes: PaneRect[] } | null;
 };
 
 export type WorkspaceView = {

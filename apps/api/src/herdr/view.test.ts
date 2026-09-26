@@ -11,7 +11,12 @@ test('interprets a real Herdr snapshot', () => {
 	const ws = view.workspaces[0]!;
 	expect(ws).toMatchObject({ id: 'w1', label: 'demo-ws', status: 'working', paneCount: 1 });
 	expect(ws.tabs).toEqual([
-		{ id: 'w1:t1', label: '1', panes: [{ id: 'w1:p1', cwd: '/tmp', agent: { name: 'test-bot', status: 'working' } }] }
+		{
+			id: 'w1:t1',
+			label: '1',
+			panes: [{ id: 'w1:p1', cwd: '/tmp', agent: { name: 'test-bot', status: 'working' } }],
+			layout: { zoomed: false, focusedPaneId: 'w1:p1', panes: [{ paneId: 'w1:p1', x: 0, y: 0, width: 1, height: 1 }] }
+		}
 	]);
 	expect(ws.agents).toEqual([
 		{
@@ -27,6 +32,32 @@ test('interprets a real Herdr snapshot', () => {
 			origin: 'external'
 		}
 	]);
+});
+
+test('tab layouts become fractions of the tab area; a broken layout is ignored', () => {
+	const split = {
+		...snapshot,
+		layouts: [
+			{
+				tab_id: 'w1:t1',
+				area: { x: 0, y: 1, width: 100, height: 40 },
+				panes: [
+					{ pane_id: 'w1:p1', rect: { x: 0, y: 1, width: 50, height: 40 } },
+					{ pane_id: 'w1:p2', rect: { x: 50, y: 21, width: 50, height: 20 } }
+				]
+			}
+		]
+	};
+	expect(sessionView(machine, { name: 't', state: 'running', snapshot: split }).workspaces[0]!.tabs[0]!.layout).toEqual({
+		zoomed: false,
+		focusedPaneId: null,
+		panes: [
+			{ paneId: 'w1:p1', x: 0, y: 0, width: 0.5, height: 1 },
+			{ paneId: 'w1:p2', x: 0.5, y: 0.5, width: 0.5, height: 0.5 }
+		]
+	});
+	const broken = sessionView(machine, { name: 't', state: 'running', snapshot: { ...snapshot, layouts: 'nope' } });
+	expect(broken.workspaces[0]!.tabs[0]).toMatchObject({ id: 'w1:t1', layout: null });
 });
 
 test('tolerates unknown fields, unknown statuses and bad snapshots', () => {

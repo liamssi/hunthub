@@ -101,4 +101,9 @@ The hub checks the runner's `terminal:cli` / `terminal:native` capability, refus
 
 ### Whole-session view
 
-"Open session" on a session page shows the whole session in Herdr's own UI (tabs, splits, keybindings), as if it were opened in a terminal on the machine. The runner runs `herdr --session <name>` in a PTY (Bun's built-in `terminal` spawn option) and streams its output through the same `term.*` channels (`view: 'session'`, capability `terminal:session`). Closing it only ends that client; the session keeps running. Stopped sessions are refused so Herdr's client can't start a server outside the runner's lifecycle management. A Roamgate-style web layout (our own tab navigation, one terminal per pane) comes later for comparison.
+"Open session" on a session page shows the whole session in Herdr's own UI (tabs, splits, keybindings), as if it were opened in a terminal on the machine. The runner runs `herdr --session <name>` in a PTY (Bun's built-in `terminal` spawn option) and streams its output through the same `term.*` channels (`view: 'session'`, capability `terminal:session`). Closing it only ends that client; the session keeps running. Stopped sessions are refused so Herdr's client can't start a server outside the runner's lifecycle management. 
+### Web layout (Roamgate style)
+
+The same page has a second view, "Web layout": our own workspace/tab navigation, and the selected tab drawn as Herdr splits it (from `session.snapshot` `layouts`, normalised by the hub to fractions of the tab area), with one live pane terminal per pane through the chosen transport. Clicking a pane gives it the keyboard; a zoomed tab shows only its zoomed pane. The runner now treats split structure (directions, rounded ratios, zoom) as a reportable change, but not raw rects, which move whenever any client resizes.
+
+Trade-offs to watch in real use: with the CLI transport every visible pane holds its control lock while controlling; with the native transport each pane is its own endpoint client, and Herdr's same-tab pane focus is shared between them.
