@@ -209,6 +209,9 @@
 		document.querySelector<HTMLTextAreaElement>(`[data-pane="${CSS.escape(paneId)}"] textarea`)?.focus();
 	}
 
+	/** Each pane's live terminal width, which its history matches. */
+	let paneCols = $state<Record<string, number>>({});
+
 	/** Per pane: watch instead of control, or take control over from its current controller. */
 	let paneMode = $state<Record<string, 'watch' | 'takeover'>>({});
 
@@ -1241,6 +1244,7 @@
 												{machineId}
 												session={session.name}
 												paneId={r.paneId}
+												cols={paneCols[r.paneId]}
 												search={historySearch[r.paneId] ?? false}
 												onclose={() => closeHistory(r.paneId)}
 											/>
@@ -1255,6 +1259,7 @@
 											takeover={paneMode[r.paneId] === 'takeover'}
 											{transport}
 											onscrollup={() => (historyOpen[r.paneId] = true)}
+											oncolschange={(c) => (paneCols[r.paneId] = c)}
 											onstatechange={(s) => {
 												states[r.paneId] = s;
 												// A takeover happens once; later reconnects ask normally again.

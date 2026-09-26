@@ -4,7 +4,7 @@
 	// refreshes while you're at its end and closes when you scroll past it.
 	import '@xterm/xterm/css/xterm.css';
 	import type { Terminal } from '@xterm/xterm';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import ArrowDownToLineIcon from '@lucide/svelte/icons/arrow-down-to-line';
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import ChevronUpIcon from '@lucide/svelte/icons/chevron-up';
@@ -25,8 +25,22 @@
 		session,
 		paneId,
 		search: searchOnOpen = false,
+		cols,
 		onclose
-	}: { machineId: string; session: string; paneId: string; search?: boolean; onclose: () => void } = $props();
+	}: {
+		machineId: string;
+		session: string;
+		paneId: string;
+		search?: boolean;
+		/** The live terminal's width: lines were drawn at it, so the history matches it (or they'd rewrap). */
+		cols?: number;
+		onclose: () => void;
+	} = $props();
+	let fitToPane: (() => void) | null = null;
+	$effect(() => {
+		void cols;
+		fitToPane?.();
+	});
 
 	/** Newer output exists that couldn't be added in place (a program redrew its screen). */
 	let stale = $state(false);
@@ -160,13 +174,21 @@
 				return true;
 			});
 			term.open(container);
-			fit.fit();
+			// Fitting leaves room for a scrollbar the live terminal doesn't have (it keeps no
+			// scrollback), so the width follows the live terminal; the scrollbar overlays the edge.
+			const t2 = term;
+			fitToPane = () => {
+				const d = fit.proposeDimensions();
+				const width = untrack(() => cols) ?? d?.cols;
+				if (d && width && (t2.cols !== width || t2.rows !== d.rows)) t2.resize(width, d.rows);
+			};
+			fitToPane();
 			// Scrolling down past the end returns to the live terminal.
 			term.attachCustomWheelEventHandler((e) => {
 				if (e.deltaY > 0 && atEnd()) onclose();
 				return true;
 			});
-			observer = new ResizeObserver(() => fit.fit());
+			observer = new ResizeObserver(() => fitToPane?.());
 			observer.observe(container);
 			if (searchOnOpen) openSearch();
 			else root.focus();
@@ -184,6 +206,7 @@
 			disposed = true;
 			clearInterval(timer);
 			observer?.disconnect();
+			fitToPane = null;
 			term?.dispose();
 		};
 	});
@@ -248,5 +271,5 @@
 			<Button size="icon-sm" variant="ghost" class="size-6" aria-label="Next match" title="Next (Enter)" onclick={() => find('next')}><ChevronDownIcon /></Button>
 		</div>
 	{/if}
-	<div bind:this={container} class="min-h-0 flex-1 ps-1.5 pt-1 pb-1.5"></div>
+	<div bind:this={container} class="min-h-0 flex-1 overflow-hidden ps-1.5 pt-1 pb-1.5"></div>
 </div>

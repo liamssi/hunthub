@@ -24,7 +24,8 @@
 		takeover = false,
 		state = $bindable<TerminalState>({ phase: 'connecting' }),
 		onstatechange,
-		onscrollup
+		onscrollup,
+		oncolschange
 	}: {
 		machineId: string;
 		session: string;
@@ -38,6 +39,8 @@
 		onstatechange?: (state: TerminalState) => void;
 		/** When set, scrolling up calls it instead of scrolling the pane (e.g. to show history above a pinned prompt). */
 		onscrollup?: () => void;
+		/** The terminal's width in columns (what the pane's lines are drawn at). */
+		oncolschange?: (cols: number) => void;
 	} = $props();
 
 	function setState(next: TerminalState) {
@@ -209,6 +212,7 @@
 			});
 			term.open(container);
 			fit.fit();
+			untrack(() => oncolschange)?.(term.cols);
 
 			const send = (msg: object) => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
 			const decoder = new TextDecoder();
@@ -297,6 +301,7 @@
 				if (!term) return;
 				const { cols, rows } = term;
 				fit.fit();
+				if (term.cols !== cols) untrack(() => oncolschange)?.(term.cols);
 				if (term.cols !== cols || term.rows !== rows) {
 					expectFullFrame();
 					send({ type: 'resize', ...size() });
