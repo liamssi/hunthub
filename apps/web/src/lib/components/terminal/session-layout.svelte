@@ -8,7 +8,10 @@
 	import type { Component, Snippet } from 'svelte';
 	import { tick, untrack } from 'svelte';
 	import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
+	import BellRingIcon from '@lucide/svelte/icons/bell-ring';
 	import HistoryIcon from '@lucide/svelte/icons/history';
+	import SearchIcon from '@lucide/svelte/icons/search';
+	import { toast } from 'svelte-sonner';
 	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import PinIcon from '@lucide/svelte/icons/pin';
 	import PinOffIcon from '@lucide/svelte/icons/pin-off';
@@ -35,6 +38,7 @@
 	import ConfirmDialog from '$lib/components/console/confirm-dialog.svelte';
 	import FormDialog, { type FormField } from '$lib/components/console/form-dialog.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import * as Command from '$lib/components/ui/command/index.js';
 	import * as ContextMenu from '$lib/components/ui/context-menu/index.js';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
@@ -429,6 +433,59 @@
 		];
 	}
 
+	// --- Attention: agents that need you, or finished --------------------------
+	const needsYou = $derived(agents.filter((a) => a.status === 'blocked'));
+	const finished = $derived(agents.filter((a) => a.status === 'done'));
+
+	/** Cycles through agents that need you first, then finished ones. */
+	function nextAttention() {
+		const list = [...needsYou, ...finished];
+		if (!list.length) return;
+		const current = tab ? activePane[tab.id] : undefined;
+		const i = list.findIndex((a) => a.paneId === current);
+		jumpToAgent(list[(i + 1) % list.length]!);
+	}
+
+	/** Whether you are looking at this pane right now. */
+	const watching = (paneId: string) =>
+		document.hasFocus() && !!tab && tab.panes.some((p) => p.id === paneId) && activePane[tab.id] === paneId;
+
+	// A toast when an agent starts needing you or finishes, unless you're looking at it.
+	const lastStatus = new Map<string, AgentStatus>();
+	let primed = false;
+	$effect(() => {
+		const list = agents;
+		untrack(() => {
+			for (const a of list) {
+				const previous = lastStatus.get(a.paneId);
+				lastStatus.set(a.paneId, a.status);
+				if (!primed || !previous || previous === a.status || watching(a.paneId)) continue;
+				const action = { label: 'Go', onClick: () => jumpToAgent(a) };
+				if (a.status === 'blocked') toast.warning(`${a.name} needs you`, { description: a.workspaceLabel, action });
+				else if (a.status === 'done') toast.success(`${a.name} finished`, { description: a.workspaceLabel, action });
+			}
+			primed = true;
+		});
+	});
+
+	// --- Go to… switcher ---------------------------------------------------------
+	let switcherOpen = $state(false);
+	const go = (fn: () => void) => {
+		switcherOpen = false;
+		fn();
+	};
+	function openTab(w: WorkspaceView, t: TabView) {
+		selectTab(w.id, t.id);
+		const paneId = activePane[t.id] ?? rectsFor(t)[0]?.paneId;
+		if (paneId) void focusWhenReady(t.id, paneId);
+	}
+	function openPane(w: WorkspaceView, t: TabView, paneId: string) {
+		selectTab(w.id, t.id);
+		if (maximized[t.id] && maximized[t.id] !== paneId) maximized[t.id] = null;
+		void focusWhenReady(t.id, paneId);
+	}
+	const paneLabel = (p: TabView['panes'][number]) => p.agent?.name ?? 'Shell';
+
 	// --- Keyboard: Alt+Shift shortcuts, taken before the terminal sees them -------
 	function paneInDirection(t: TabView, from: string, dir: 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown') {
 		const rects = rectsFor(t);
@@ -452,7 +509,21 @@
 	}
 
 	function onKeydown(e: KeyboardEvent) {
+		// Ctrl/Cmd+K opens the switcher, except in a terminal (where Ctrl+K deletes to the end of the line).
+		if (e.code === 'KeyK' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+			if (e.target instanceof Element && e.target.closest('.xterm')) return;
+			e.preventDefault();
+			switcherOpen = !switcherOpen;
+			return;
+		}
 		if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey || form.open || confirm.open) return;
+		if (e.code === 'KeyK') {
+			e.preventDefault();
+			e.stopPropagation();
+			switcherOpen = !switcherOpen;
+			return;
+		}
+		if (switcherOpen) return;
 		const w = space;
 		const t = tab;
 		if (!w || !t) return;
@@ -472,6 +543,7 @@
 		}
 		else if (code === 'KeyT') void newTab(w.id);
 		else if (code === 'KeyN') newSpace();
+		else if (code === 'KeyJ') nextAttention();
 		else if (code === 'BracketLeft' || code === 'BracketRight') {
 			const next = w.tabs[(tabIndex + (code === 'BracketRight' ? 1 : -1) + w.tabs.length) % w.tabs.length];
 			if (next) selectTab(w.id, next.id);
@@ -485,6 +557,8 @@
 	}
 
 	const shortcutList = [
+		['Go to… (space, tab, pane, agent)', 'K'],
+		['Next agent that needs you', 'J'],
 		['Move between panes', '←↑→↓'],
 		['Split right', '\\'],
 		['Split down', '-'],
@@ -622,6 +696,36 @@
 			{/if}
 
 			<div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
+				<div class="flex flex-col gap-2 px-2 pt-2">
+					<button
+						type="button"
+						class="flex h-8 items-center gap-2 rounded-md border bg-background/40 px-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+						onclick={() => (switcherOpen = true)}
+					>
+						<SearchIcon class="size-4" aria-hidden="true" />
+						Go to…
+						<Kbd class="ms-auto">{keys('K')}</Kbd>
+					</button>
+					{#if needsYou.length || finished.length}
+						<button
+							type="button"
+							class={cn(
+								'flex items-center gap-2 rounded-md border px-2 py-1.5 text-start text-sm transition-colors',
+								needsYou.length
+									? 'border-destructive/40 bg-destructive/15 hover:bg-destructive/25'
+									: 'border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20'
+							)}
+							onclick={nextAttention}
+							title="Go to the next one ({keys('J')})"
+						>
+							<BellRingIcon class={cn('size-4 shrink-0', needsYou.length ? 'text-destructive' : 'text-emerald-400')} aria-hidden="true" />
+							<span class="min-w-0 flex-1 truncate">
+								{#if needsYou.length}{needsYou.length} {needsYou.length === 1 ? 'agent needs' : 'agents need'} you{/if}{#if needsYou.length && finished.length}, {/if}{#if finished.length}{finished.length} finished{/if}
+							</span>
+							<span class="shrink-0 text-xs text-muted-foreground">Next</span>
+						</button>
+					{/if}
+				</div>
 				<section class="flex flex-col gap-0.5 p-2" aria-labelledby="spaces-heading">
 					<div class="flex h-7 items-center gap-1.5 px-2">
 						<ToggleGroup.Root
@@ -823,7 +927,8 @@
 							<div
 								class={cn(
 									'group flex size-full min-h-0 flex-col overflow-hidden rounded-lg border shadow-sm transition-colors',
-									active ? 'border-foreground/45' : 'hover:border-foreground/20'
+									active ? 'border-foreground/45' : 'hover:border-foreground/20',
+									pane?.agent?.status === 'blocked' && 'border-destructive/70'
 								)}
 								style:background-color={themeColors(appearance.theme).background}
 							>
@@ -833,7 +938,11 @@
 											<!-- svelte-ignore a11y_no_static_element_interactions -->
 											<div
 												{...props}
-												class="flex h-7 shrink-0 items-center gap-2 border-b border-border/60 ps-2.5 pe-1 text-xs"
+												class={cn(
+													'flex h-7 shrink-0 items-center gap-2 border-b border-border/60 ps-2.5 pe-1 text-xs',
+													pane?.agent?.status === 'blocked' && 'bg-destructive/15',
+													pane?.agent?.status === 'done' && 'bg-emerald-500/10'
+												)}
 												ondblclick={() => rects.length > 1 && toggleMaximize(t.id, r.paneId)}
 											>
 												{#if pane?.agent}
@@ -997,3 +1106,81 @@
 		</dl>
 	</Dialog.Content>
 </Dialog.Root>
+
+<Command.Dialog bind:open={switcherOpen} title="Go to" description="Search this session's agents, tabs, panes and spaces">
+	<Command.Input placeholder="Go to an agent, tab, pane or space…" />
+	<Command.List>
+		<Command.Empty>Nothing matches.</Command.Empty>
+		{#if agents.length}
+			<Command.Group heading="Agents">
+				{#each agents as a (a.paneId)}
+					<Command.Item value="agent {a.name} {a.workspaceLabel} {a.paneId}" onSelect={() => go(() => jumpToAgent(a))}>
+						<StatusBadge status={a.status} compact />
+						<span class="min-w-0 flex-1 truncate">{a.name}</span>
+						<span class="max-w-[45%] shrink-0 truncate text-xs text-muted-foreground">{a.workspaceLabel}</span>
+					</Command.Item>
+				{/each}
+			</Command.Group>
+		{/if}
+		<Command.Group heading="Tabs">
+			{#each session.workspaces as w (w.id)}
+				{#each w.tabs as t (t.id)}
+					{@const agent = tabAgent(t)}
+					<Command.Item value="tab {w.label} {t.label} {agent?.name ?? ''} {t.id}" onSelect={() => go(() => openTab(w, t))}>
+						{#if agent}<BotIcon />{:else if t.panes.length > 1}<Columns2Icon />{:else}<SquareTerminalIcon />{/if}
+						<span class="min-w-0 flex-1 truncate">{agent ? agent.name : `Tab ${t.label}`}</span>
+						<span class="max-w-[45%] shrink-0 truncate text-xs text-muted-foreground">{w.label}</span>
+					</Command.Item>
+				{/each}
+			{/each}
+		</Command.Group>
+		<Command.Group heading="Panes">
+			{#each session.workspaces as w (w.id)}
+				{#each w.tabs as t (t.id)}
+					{#each t.panes as p (p.id)}
+						<Command.Item value="pane {paneLabel(p)} {p.cwd ?? ''} {w.label} {t.label} {p.id}" onSelect={() => go(() => openPane(w, t, p.id))}>
+							{#if p.agent}<BotIcon />{:else}<SquareTerminalIcon />{/if}
+							<span class="truncate">{paneLabel(p)}</span>
+							<span class="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">{folder(p.cwd)}</span>
+							<span class="max-w-[45%] shrink-0 truncate text-xs text-muted-foreground">{w.label} · Tab {t.label}</span>
+						</Command.Item>
+					{/each}
+				{/each}
+			{/each}
+		</Command.Group>
+		<Command.Group heading="Spaces">
+			{#each session.workspaces as w (w.id)}
+				<Command.Item value="space {w.label} {w.id}" onSelect={() => go(() => (selectedSpaceId = w.id))}>
+					{#if w.worktree}<GitBranchIcon />{:else}<FolderIcon />{/if}
+					<span class="truncate">{w.label}</span>
+				</Command.Item>
+			{/each}
+		</Command.Group>
+		<Command.Separator />
+		<Command.Group heading="Actions">
+			{#if space}
+				<Command.Item value="action new tab" onSelect={() => go(() => space && void newTab(space.id))}>
+					<PlusIcon />New tab<Command.Shortcut>{keys('T')}</Command.Shortcut>
+				</Command.Item>
+			{/if}
+			<Command.Item value="action new space" onSelect={() => go(newSpace)}>
+				<PlusIcon />New space<Command.Shortcut>{keys('N')}</Command.Shortcut>
+			</Command.Item>
+			{#if tab && (activePane[tab.id] ?? rectsFor(tab)[0]?.paneId)}
+				{@const paneId = (activePane[tab.id] ?? rectsFor(tab)[0]?.paneId)!}
+				<Command.Item value="action split right" onSelect={() => go(() => tab && void splitPane(tab.id, paneId, 'right'))}>
+					<SquareSplitHorizontalIcon />Split right<Command.Shortcut>{keys('\\')}</Command.Shortcut>
+				</Command.Item>
+				<Command.Item value="action split down" onSelect={() => go(() => tab && void splitPane(tab.id, paneId, 'down'))}>
+					<SquareSplitVerticalIcon />Split down<Command.Shortcut>{keys('-')}</Command.Shortcut>
+				</Command.Item>
+				<Command.Item value="action show history" onSelect={() => go(() => (historyOpen[paneId] = true))}>
+					<HistoryIcon />Show history<Command.Shortcut>{keys('H')}</Command.Shortcut>
+				</Command.Item>
+			{/if}
+			<Command.Item value="action keyboard shortcuts" onSelect={() => go(() => (shortcutsOpen = true))}>
+				<KeyboardIcon />Keyboard shortcuts<Command.Shortcut>{keys('/')}</Command.Shortcut>
+			</Command.Item>
+		</Command.Group>
+	</Command.List>
+</Command.Dialog>

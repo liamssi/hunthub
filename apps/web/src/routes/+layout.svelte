@@ -18,7 +18,8 @@
 
 <svelte:head><link rel="icon" href={favicon} /></svelte:head>
 <ModeWatcher />
-<Toaster richColors />
+<!-- The session workspace is always dark, so its toasts are too. -->
+<Toaster richColors {...immersive ? { theme: 'dark' as const } : {}} />
 
 {#if data.user}
 	<Sidebar.Provider open={data.sidebarOpen}>

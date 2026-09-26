@@ -33,6 +33,7 @@
 		})
 	);
 	const session = $derived(herdr.sessions.find((s) => s.name === data.sessionName));
+	const needsYou = $derived(session?.workspaces.flatMap((w) => w.agents).filter((a) => a.status === 'blocked').length ?? 0);
 	const sessionHref = $derived(`/machines/${data.machine.id}/sessions/${encodeURIComponent(data.sessionName)}`);
 
 	// The app sidebar folds away while working here and comes back as it was.
@@ -112,7 +113,8 @@
 	let termState = $state<TerminalState>({ phase: 'connecting' });
 </script>
 
-<svelte:head><title>{data.sessionName} · {data.machine.name} · HuntHub</title></svelte:head>
+<!-- Agents that need you show in the browser tab too. -->
+<svelte:head><title>{needsYou ? `(${needsYou}) ` : ''}{data.sessionName} · {data.machine.name} · HuntHub</title></svelte:head>
 
 {#snippet breadcrumb()}
 	<Sidebar.Trigger />

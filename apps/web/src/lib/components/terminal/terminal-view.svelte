@@ -111,10 +111,13 @@
 
 	// One connection per set of connection parameters. Everything else (callbacks,
 	// this terminal's own state) is read untracked, so updates never reconnect.
+	// Props are read through the parent's state, so an unrelated update there (a new session
+	// snapshot) would re-run a plain effect; this derived only changes when a parameter does.
+	const connectionKey = $derived(JSON.stringify([machineId, session, view, target, mode, transport]));
 	$effect(() => {
-		const params = { machineId, session, view, target, mode, transport };
+		void connectionKey;
 		// Taking over only matters when a connection starts; clearing it afterwards must not reconnect.
-		return untrack(() => connect({ ...params, takeover }));
+		return untrack(() => connect({ machineId, session, view, target, mode, transport, takeover }));
 	});
 
 	function connect({
