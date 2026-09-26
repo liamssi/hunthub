@@ -191,6 +191,8 @@
 	});
 	let pinned = $state<Record<string, boolean>>({});
 	let historyOpen = $state<Record<string, boolean>>({});
+	/** Panes whose history opened for searching (focuses the search box). */
+	let historySearch = $state<Record<string, boolean>>({});
 	const isPinned = (paneId: string) => pinned[paneId] ?? pinDefault;
 	function togglePin(paneId: string) {
 		const next = !isPinned(paneId);
@@ -205,6 +207,7 @@
 	}
 	function closeHistory(paneId: string) {
 		historyOpen[paneId] = false;
+		historySearch[paneId] = false;
 		document.querySelector<HTMLTextAreaElement>(`[data-pane="${CSS.escape(paneId)}"] textarea`)?.focus();
 	}
 	/** Live rows left visible under the history panel. */
@@ -403,6 +406,15 @@
 				{ label: 'Split right', icon: SquareSplitHorizontalIcon, shortcut: keys('\\'), run: () => void splitPane(t.id, paneId, 'right') },
 				{ label: 'Split down', icon: SquareSplitVerticalIcon, shortcut: keys('-'), run: () => void splitPane(t.id, paneId, 'down') },
 				{ label: 'Show history', icon: HistoryIcon, shortcut: keys('H'), run: () => (historyOpen[paneId] = true) },
+				{
+					label: 'Search in history',
+					icon: SearchIcon,
+					shortcut: keys('F'),
+					run: () => {
+						historySearch[paneId] = true;
+						historyOpen[paneId] = true;
+					}
+				},
 				...(rectsFor(t).length > 1
 					? [{ label: max ? 'Restore layout' : 'Maximize', icon: max ? Minimize2Icon : Maximize2Icon, shortcut: keys('Z'), run: () => toggleMaximize(t.id, paneId) }]
 					: [])
@@ -537,7 +549,10 @@
 		else if (code === 'Minus' && paneId) void splitPane(t.id, paneId, 'down');
 		else if (code === 'KeyZ' && paneId && rectsFor(t).length > 1) toggleMaximize(t.id, paneId);
 		else if (code === 'KeyX' && paneId) closePane(t, paneId);
-		else if (code === 'KeyH' && paneId) {
+		else if (code === 'KeyF' && paneId) {
+			historySearch[paneId] = true;
+			historyOpen[paneId] = true;
+		} else if (code === 'KeyH' && paneId) {
 			if (historyOpen[paneId]) closeHistory(paneId);
 			else historyOpen[paneId] = true;
 		}
@@ -565,6 +580,7 @@
 		['Maximize or restore pane', 'Z'],
 		['Close pane', 'X'],
 		['Show or hide history', 'H'],
+		['Search in history', 'F'],
 		['New tab', 'T'],
 		['Previous / next tab', '[ ]'],
 		['Go to tab 1–9', '1…9'],
@@ -1026,7 +1042,7 @@
 								<div class="relative min-h-0 flex-1">
 									{#if historyOpen[r.paneId]}
 										<div class="absolute inset-x-0 top-0 z-10" style:height="calc(100% - {Math.round(appearance.size * 1.1 * LIVE_ROWS) + 8}px)">
-											<HistoryPanel {machineId} session={session.name} paneId={r.paneId} onclose={() => closeHistory(r.paneId)} />
+											<HistoryPanel {machineId} session={session.name} paneId={r.paneId} search={historySearch[r.paneId] ?? false} onclose={() => closeHistory(r.paneId)} />
 										</div>
 									{/if}
 									{#key `${r.paneId}:${mode}:${transport}:${attempts[r.paneId] ?? 0}`}

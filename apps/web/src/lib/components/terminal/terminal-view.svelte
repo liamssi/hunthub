@@ -12,6 +12,7 @@
 	import type { Terminal } from '@xterm/xterm';
 	import { untrack } from 'svelte';
 	import { appearance, fontFamily, loadAppearance, themeColors } from '$lib/terminal-appearance.svelte';
+	import { copyText, openWebLink } from '$lib/clipboard';
 
 	let {
 		machineId,
@@ -146,7 +147,12 @@
 
 		void (async () => {
 			loadAppearance();
-			const [{ Terminal }, { FitAddon }] = await Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit'), fontReady()]);
+			const [{ Terminal }, { FitAddon }, { WebLinksAddon }] = await Promise.all([
+				import('@xterm/xterm'),
+				import('@xterm/addon-fit'),
+				import('@xterm/addon-web-links'),
+				fontReady()
+			]);
 			if (disposed) return;
 			term = new Terminal({
 				cursorBlink: mode === 'control',
@@ -155,10 +161,32 @@
 				fontSize: appearance.size,
 				lineHeight: 1.1,
 				scrollback: 0,
-				theme: themeColors(appearance.theme)
+				theme: themeColors(appearance.theme),
+				// Hyperlinks programs emit (OSC 8); only web links open.
+				linkHandler: { activate: (_event, uri) => openWebLink(uri), allowNonHttpProtocols: false }
 			});
 			const fit = new FitAddon();
 			term.loadAddon(fit);
+			// Plain URLs in the output become clickable.
+			term.loadAddon(new WebLinksAddon((_event, uri) => openWebLink(uri)));
+			// Copy and paste like other web terminals: Ctrl+C copies when text is selected
+			// (and still interrupts when not), Ctrl+Shift+C copies, Ctrl+V / Ctrl+Shift+V paste.
+			const t = term;
+			t.attachCustomKeyEventHandler((e) => {
+				if (e.type !== 'keydown' || !(e.ctrlKey || e.metaKey) || e.altKey) return true;
+				const key = e.key.toLowerCase();
+				if (key === 'c' && (e.shiftKey || t.hasSelection())) {
+					if (t.hasSelection()) {
+						void copyText(t.getSelection());
+						if (!e.shiftKey) t.clearSelection();
+					}
+					e.preventDefault();
+					return false;
+				}
+				// Leave the key to the browser, whose paste event the terminal handles.
+				if (key === 'v') return false;
+				return true;
+			});
 			term.open(container);
 			fit.fit();
 
