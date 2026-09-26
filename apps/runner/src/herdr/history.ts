@@ -16,6 +16,8 @@ const READ_LINES = 1000;
 const ACTIVITY_DEBOUNCE_MS = 1500;
 /** Marks where output may be missing (more arrived between reads than Herdr hands out). */
 export const GAP_MARKER = '\x1b[2m⋯ earlier output was not captured ⋯\x1b[0m';
+/** Marks where the pane's scrollback was cleared (e.g. \`clear\`, or an agent redrawing after a resize). */
+export const CLEARED_MARKER = '\x1b[2m⋯ the screen was cleared ⋯\x1b[0m';
 
 type Transcript = { lines: string[]; readAt: number };
 
@@ -47,10 +49,39 @@ export function mergeLines(kept: string[], latest: string[], max = HISTORY_LINES
 	}
 	let merged: string[];
 	if (overlap > 0) merged = [...stable.slice(0, stable.length - overlap), ...latest];
-	else if (latest.length < READ_LINES) merged = latest; // Herdr still has everything: nothing is lost.
-	else merged = [...stable, GAP_MARKER, ...latest];
+	else if (latest.length >= READ_LINES) merged = [...stable, GAP_MARKER, ...latest];
+	else {
+		// Herdr's scrollback was rewritten: a program redrew its screen, or the pane was
+		// cleared (an agent like Claude Code clears and reprints its conversation on resize).
+		// Where the new lines begin with lines already kept, they continue from there;
+		// otherwise the earlier output stays, with a marker.
+		const from = lastStart(stable, latest);
+		merged = from >= 0 ? [...stable.slice(0, from), ...latest] : [...withoutMarkerAtEnd(stable), CLEARED_MARKER, ...latest];
+	}
 	return merged.length > max ? merged.slice(-max) : merged;
 }
+
+/**
+ * Where in the kept lines Herdr's lines begin (their first few lines, at least one
+ * of them not blank), the last such place; -1 when they don't.
+ */
+function lastStart(kept: string[], latest: string[]): number {
+	const n = Math.min(3, latest.length);
+	if (!latest.slice(0, n).some((l) => l.trim())) return -1;
+	for (let k = kept.length - n; k >= 0; k--) {
+		let same = true;
+		for (let i = 0; i < n && same; i++) same = kept[k + i] === latest[i];
+		if (same) return k;
+	}
+	return -1;
+}
+
+/** Repeated clears leave one marker, not a stack of them. */
+const withoutMarkerAtEnd = (lines: string[]) => {
+	let end = lines.length;
+	while (end > 0 && (lines[end - 1] === CLEARED_MARKER || lines[end - 1].trim() === '')) end--;
+	return lines.slice(0, end);
+};
 
 export class PaneHistory {
 	private transcripts = new Map<string, Transcript>();

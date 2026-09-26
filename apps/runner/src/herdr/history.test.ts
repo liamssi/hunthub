@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { GAP_MARKER, mergeLines } from './history';
+import { CLEARED_MARKER, GAP_MARKER, mergeLines } from './history';
 
 const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => `line ${from + i}`);
 
@@ -31,7 +31,31 @@ describe('pane history transcript', () => {
 		expect(mergeLines(range(1, 90), range(80, 120), 50)).toEqual(range(71, 120));
 	});
 
-	test('a cleared pane with little output replaces the transcript', () => {
-		expect(mergeLines(range(1, 50), ['$ '])).toEqual(['$ ']);
+	test('a cleared pane keeps what came before, marking the clear', () => {
+		expect(mergeLines([...range(1, 50), '$ clear'], ['', '$ '])).toEqual([...range(1, 50), CLEARED_MARKER, '', '$ ']);
+	});
+
+	test('each clear keeps the screen before it', () => {
+		let kept = [...range(1, 20), '$ '];
+		kept = mergeLines(kept, ['', 'screen a', '> ']);
+		kept = mergeLines(kept, ['', 'screen b', '> ']);
+		expect(kept.filter((l) => l === CLEARED_MARKER).length).toBe(2);
+		expect(kept.slice(0, 20)).toEqual(range(1, 20));
+		expect(kept.at(-2)).toBe('screen b');
+	});
+
+	test('an agent clearing and reprinting its conversation is kept once', () => {
+		const conversation = ['╭ Claude ╮', '> hello', '● hi there', ...range(1, 40)];
+		let kept = [...range(900, 910), '$ claude', ...conversation, '> '];
+		// Resized: the agent clears the scrollback and prints the conversation again.
+		kept = mergeLines(kept, [...conversation, '● more', '> ']);
+		kept = mergeLines(kept, [...conversation, '● more', '● and more', '> ']);
+		expect(kept).toEqual([...range(900, 910), '$ claude', ...conversation, '● more', '● and more', '> ']);
+	});
+
+	test('a program redrawing its screen (Herdr still has everything) replaces the tail', () => {
+		const kept = [...range(1, 30), '╭ box ╮', '│ old │', '╰─────╯'];
+		const latest = [...range(1, 30), '╭ box ╮', '│ new │', '╰─────╯'];
+		expect(mergeLines(kept, latest)).toEqual(latest);
 	});
 });
