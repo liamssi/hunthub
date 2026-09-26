@@ -60,7 +60,9 @@
 		mode,
 		transport,
 		header,
-		controls
+		controls,
+		active = true,
+		jump = null
 	}: {
 		machineId: string;
 		session: SessionView;
@@ -70,6 +72,10 @@
 		header?: Snippet;
 		/** Right end of the tab bar (view switch, menus). */
 		controls?: Snippet;
+		/** Whether this session is the one shown (hidden ones stay connected but ignore shortcuts). */
+		active?: boolean;
+		/** Go to a pane (a new object each time asks again). */
+		jump?: { paneId: string } | null;
 	} = $props();
 
 	// The workspace takes the terminal theme's colors (set inline: the .dark class would override inherited ones).
@@ -248,6 +254,22 @@
 		if (maximized[t.id] && maximized[t.id] !== agent.paneId) maximized[t.id] = null;
 		void focusPane(t.id, agent.paneId);
 	}
+
+	// Going to a pane from outside (a pin, the explorer): its space and tab, then the keyboard.
+	$effect(() => {
+		const target = jump;
+		if (!target) return;
+		untrack(() => {
+			for (const w of session.workspaces) {
+				const t = w.tabs.find((x) => x.panes.some((p) => p.id === target.paneId));
+				if (!t) continue;
+				selectTab(w.id, t.id);
+				if (maximized[t.id] && maximized[t.id] !== target.paneId) maximized[t.id] = null;
+				void focusWhenReady(t.id, target.paneId);
+				return;
+			}
+		});
+	});
 
 	/** Pane rectangles for a tab: Herdr's layout, or a plain vertical stack if it isn't known. */
 	function rectsFor(t: TabView): PaneRect[] {
@@ -638,6 +660,7 @@
 	}
 
 	function onKeydown(e: KeyboardEvent) {
+		if (!active) return;
 		// Ctrl/Cmd+K opens the switcher, except in a terminal (where Ctrl+K deletes to the end of the line).
 		if (e.code === 'KeyK' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
 			if (e.target instanceof Element && e.target.closest('.xterm')) return;
@@ -832,7 +855,7 @@
 				<span class="h-full w-px bg-foreground/40 opacity-0 transition-opacity group-hover/edge:opacity-100 group-focus-visible/edge:opacity-100"></span>
 			</div>
 			{#if header}
-				<div class="flex h-10 shrink-0 items-center gap-2 border-b px-2">{@render header()}</div>
+				<div class="shrink-0 border-b">{@render header()}</div>
 			{/if}
 
 			<div class="flex min-h-0 flex-1 flex-col overflow-y-auto">

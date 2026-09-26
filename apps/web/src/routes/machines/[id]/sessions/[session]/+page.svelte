@@ -18,6 +18,7 @@
 	import { consoleCall, deleteSession, startSession, stopSession } from '$lib/console';
 	import { subscribeLive } from '$lib/live';
 	import { applyLive } from '$lib/machines';
+	import { workspaceHref } from '$lib/fleet.svelte';
 
 	let { data } = $props();
 
@@ -175,7 +176,7 @@
 	{#if session && online}
 		<div class="flex gap-2">
 			{#if running}
-				<Button href="/machines/{machine.id}/sessions/{encodeURIComponent(name)}/terminal"><TerminalIcon data-icon="inline-start" />Open session</Button>
+				<Button href={workspaceHref(machine.id, name)}><TerminalIcon data-icon="inline-start" />Open session</Button>
 				<Button variant="outline" onclick={newWorkspace}><PlusIcon data-icon="inline-start" />New workspace</Button>
 				<Button variant="outline" onclick={newWorktree}><GitBranchIcon data-icon="inline-start" />New worktree</Button>
 				<Button variant="outline" onclick={confirmStop}><SquareIcon data-icon="inline-start" />Stop</Button>

@@ -10,7 +10,8 @@
 		'/admin/settings': 'Settings',
 		'/account': 'Account',
 		'/machines': 'Machines',
-		'/agents': 'Agents'
+		'/agents': 'Agents',
+		'/explore': 'Explore'
 	};
 
 	/** Label for a path, including detail pages that name what they show. */

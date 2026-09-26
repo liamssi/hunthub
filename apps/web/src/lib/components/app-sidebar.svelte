@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { ComponentProps } from 'svelte';
-	import BotIcon from '@lucide/svelte/icons/bot';
+	import CompassIcon from '@lucide/svelte/icons/compass';
 	import CrosshairIcon from '@lucide/svelte/icons/crosshair';
 	import HouseIcon from '@lucide/svelte/icons/house';
 	import ServerIcon from '@lucide/svelte/icons/server';
@@ -8,6 +8,7 @@
 	import UsersIcon from '@lucide/svelte/icons/users';
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
 	import NavMain, { type NavSection } from './nav-main.svelte';
+	import NavPins from './nav-pins.svelte';
 	import NavUser from './nav-user.svelte';
 
 	let {
@@ -22,8 +23,8 @@
 			label: 'Platform',
 			items: [
 				{ title: 'Home', url: '/', icon: HouseIcon },
-				{ title: 'Machines', url: '/machines', icon: ServerIcon },
-				{ title: 'Agents', url: '/agents', icon: BotIcon }
+				{ title: 'Explore', url: '/explore', icon: CompassIcon },
+				{ title: 'Machines', url: '/machines', icon: ServerIcon }
 			]
 		},
 		...(user.role === 'admin'
@@ -62,6 +63,7 @@
 	</Sidebar.Header>
 	<Sidebar.Content>
 		<NavMain {sections} />
+		<NavPins />
 	</Sidebar.Content>
 	<Sidebar.Footer>
 		<NavUser {user} />

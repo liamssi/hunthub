@@ -4,6 +4,7 @@
 	import { validateSessionName } from '@hunthub/shared/console';
 	import FormDialog from '$lib/components/console/form-dialog.svelte';
 	import { startSession } from '$lib/console';
+	import { workspaceHref } from '$lib/fleet.svelte';
 	import { toast } from 'svelte-sonner';
 	import type { AgentView, Machine, MachineHerdrView } from '@hunthub/shared/machines';
 	import { Badge } from '$lib/components/ui/badge/index.js';
@@ -62,6 +63,7 @@
 								{session.workspaces.length}
 								{session.workspaces.length === 1 ? 'workspace' : 'workspaces'}
 							</span>
+							<Button size="sm" class="ms-auto" href={workspaceHref(machine.id, session.name)}>Open</Button>
 						{/if}
 					</header>
 					{#each session.workspaces as ws (ws.id)}

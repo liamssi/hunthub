@@ -9,11 +9,22 @@
 	import AppSidebar from '$lib/components/app-sidebar.svelte';
 
 	import { page } from '$app/state';
+	import { untrack } from 'svelte';
+	import { useFleet } from '$lib/fleet.svelte';
+	import { loadPins } from '$lib/pins.svelte';
 
 	let { data, children } = $props();
 
 	// The session workspace uses the whole window and brings its own top bar.
-	const immersive = $derived(page.route.id?.endsWith('/sessions/[session]/terminal') ?? false);
+	const immersive = $derived(page.route.id === '/workspace');
+
+	// Machines, every Herdr session and your pins stay live for the whole app once signed in.
+	const signedIn = $derived(!!data.user);
+	$effect(() => {
+		if (!signedIn) return;
+		untrack(() => void loadPins());
+		return useFleet();
+	});
 </script>
 
 <svelte:head><link rel="icon" href={favicon} /></svelte:head>
