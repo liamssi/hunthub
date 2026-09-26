@@ -17,7 +17,23 @@
 	import { appearance, fontFamily, themeColors } from '$lib/terminal-appearance.svelte';
 	import { toast } from 'svelte-sonner';
 
-	let { machineId, session, root, path, onclose }: { machineId: string; session: string; root: string; path: string; onclose: () => void } = $props();
+	let {
+		machineId,
+		session,
+		root,
+		path,
+		onback,
+		onclose
+	}: {
+		machineId: string;
+		session: string;
+		root: string;
+		path: string;
+		/** Esc: back to the terminals (the file stays open as a tab). */
+		onback: () => void;
+		/** Close this file's tab. */
+		onclose: () => void;
+	} = $props();
 
 	let file = $state<FileContent | null>(null);
 	let error = $state<string | null>(null);
@@ -51,7 +67,7 @@
 		void load();
 	});
 
-	onMount(() => container.focus());
+	onMount(() => container.focus({ preventScroll: true }));
 
 	// Markdown: rendered with marked, sanitized with DOMPurify; links open in a new tab.
 	$effect(() => {
@@ -163,7 +179,7 @@
 	const modified = $derived(file ? new Date(file.mtime).toLocaleString() : '');
 </script>
 
-<!-- A focusable region; Esc closes it (unless a search box inside is handling Esc). -->
+<!-- A focusable region; Esc goes back to the terminals (unless a search box inside is handling Esc). -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div
 	bind:this={container}
@@ -175,7 +191,7 @@
 	onkeydown={(e) => {
 		if (e.key === 'Escape' && !e.defaultPrevented) {
 			e.preventDefault();
-			onclose();
+			onback();
 		}
 	}}
 >
@@ -213,7 +229,7 @@
 				<Button size="sm" variant="ghost" class="h-7 px-2 text-xs" onclick={() => copy('contents')}>Copy contents</Button>
 			{/if}
 			<Button size="icon-sm" variant="ghost" aria-label="Reload" title="Reload" onclick={load}><RefreshCwIcon /></Button>
-			<Button size="icon-sm" variant="ghost" aria-label="Close file" title="Close (Esc)" onclick={onclose}><XIcon /></Button>
+			<Button size="icon-sm" variant="ghost" aria-label="Close file" title="Close tab" onclick={onclose}><XIcon /></Button>
 		</span>
 	</div>
 

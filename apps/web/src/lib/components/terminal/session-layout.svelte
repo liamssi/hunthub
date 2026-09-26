@@ -9,6 +9,7 @@
 	import { tick, untrack } from 'svelte';
 	import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
 	import BellRingIcon from '@lucide/svelte/icons/bell-ring';
+	import FileCodeIcon from '@lucide/svelte/icons/file-code';
 	import FolderTreeIcon from '@lucide/svelte/icons/folder-tree';
 	import HistoryIcon from '@lucide/svelte/icons/history';
 	import SearchIcon from '@lucide/svelte/icons/search';
@@ -228,6 +229,7 @@
 	};
 
 	function selectTab(spaceId: string, tabId: string) {
+		activeFile = null;
 		selectedSpaceId = spaceId;
 		tabBySpace[spaceId] = tabId;
 	}
@@ -467,7 +469,57 @@
 		filesOpen = open;
 		remember(FILES_KEY, open ? 'open' : 'closed');
 	}
-	let openFile = $state<OpenFile | null>(null);
+	// Open files are tabs next to the terminal tabs (remembered per session in this browser).
+	const fileKey = (f: OpenFile) => `${f.root}\n${f.path}`;
+	const FILE_TABS_KEY = $derived(`hunthub.workspace.fileTabs:${machineId}:${session.name}`);
+	let fileTabs = $state<OpenFile[]>([]);
+	let activeFile = $state<string | null>(null);
+	const openFile = $derived(fileTabs.find((f) => fileKey(f) === activeFile) ?? null);
+	$effect(() => {
+		const key = FILE_TABS_KEY;
+		untrack(() => {
+			try {
+				const saved = JSON.parse(localStorage.getItem(key) ?? '[]');
+				fileTabs = Array.isArray(saved) ? saved.filter((f) => typeof f?.root === 'string' && typeof f?.path === 'string') : [];
+			} catch {
+				fileTabs = [];
+			}
+			activeFile = null;
+		});
+	});
+	/** Shows a file tab and gives its viewer the keyboard (Esc, Ctrl+F). */
+	async function showFile(key: string) {
+		activeFile = key;
+		await tick();
+		document.querySelector<HTMLElement>(`[data-file-tab="${CSS.escape(key)}"] [role=region]`)?.focus({ preventScroll: true });
+	}
+	function saveFileTabs() {
+		remember(FILE_TABS_KEY, JSON.stringify(fileTabs));
+	}
+	function openFileTab(f: OpenFile) {
+		if (!fileTabs.some((x) => fileKey(x) === fileKey(f))) {
+			fileTabs = [...fileTabs, f];
+			saveFileTabs();
+		}
+		void showFile(fileKey(f));
+	}
+	function closeFileTab(f: OpenFile) {
+		const i = fileTabs.findIndex((x) => fileKey(x) === fileKey(f));
+		if (i < 0) return;
+		fileTabs = fileTabs.filter((_, j) => j !== i);
+		saveFileTabs();
+		if (activeFile === fileKey(f)) {
+			// Show the neighbouring file, or go back to the terminals.
+			const next = fileTabs[i] ?? fileTabs[i - 1];
+			activeFile = next ? fileKey(next) : null;
+			if (!next) backToTerminals();
+		}
+	}
+	function backToTerminals() {
+		activeFile = null;
+		const paneId = tab ? activePane[tab.id] : undefined;
+		if (tab && paneId) void focusPane(tab.id, paneId);
+	}
 	/** A folder asked for explicitly ("Browse files here"); otherwise the explorer follows the space. */
 	let browseRoot = $state<string | null>(null);
 	const preferredRoot = $derived.by(() => {
@@ -491,10 +543,7 @@
 		if (!space) return;
 		const out = await consoleRequest(machineId, session.name, 'Open terminal', 'tab.create', { workspace_id: space.id, cwd: path });
 		const created = out.ok ? (out.result as { tab?: { tab_id?: string } } | null)?.tab?.tab_id : undefined;
-		if (created) {
-			openFile = null;
-			selectTab(space.id, created);
-		}
+		if (created) selectTab(space.id, created);
 	}
 	function startFilesResize(e: PointerEvent) {
 		const el = e.currentTarget as HTMLElement;
@@ -944,7 +993,7 @@
 			{/if}
 			<div class="flex min-w-0 items-stretch overflow-x-auto" role="tablist" aria-label="Tabs in {space?.label ?? 'space'}">
 				{#each space?.tabs ?? [] as t (t.id)}
-					{@const current = t.id === tab?.id}
+					{@const current = t.id === tab?.id && !activeFile}
 					{@const agent = tabAgent(t)}
 					<ContextMenu.Root>
 						<ContextMenu.Trigger>
@@ -984,6 +1033,42 @@
 						</Button>
 					</div>
 				{/if}
+				{#if fileTabs.length}
+					<span class="my-2.5 w-px shrink-0 bg-border" aria-hidden="true"></span>
+					{#each fileTabs as f (fileKey(f))}
+						{@const current = activeFile === fileKey(f)}
+						{@const name = f.path.split('/').pop() || f.path}
+						<div
+							class={cn(
+								'group/ft relative flex shrink-0 items-center text-sm text-muted-foreground transition-colors hover:text-foreground',
+								current && 'text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-foreground'
+							)}
+						>
+							<button
+								type="button"
+								role="tab"
+								aria-selected={current}
+								class="flex h-full items-center gap-2 ps-3 pe-1 outline-none focus-visible:text-foreground"
+								title="{f.root}/{f.path}"
+								onclick={() => showFile(fileKey(f))}
+								onauxclick={(e) => e.button === 1 && closeFileTab(f)}
+							>
+								<FileCodeIcon class="size-4" aria-hidden="true" />
+								<span class="max-w-40 truncate">{name}</span>
+							</button>
+							<Button
+								size="icon-sm"
+								variant="ghost"
+								class={cn('me-1 size-5 opacity-0 group-hover/ft:opacity-100 focus-visible:opacity-100', current && 'opacity-100')}
+								aria-label="Close {name}"
+								title="Close"
+								onclick={() => closeFileTab(f)}
+							>
+								<XIcon />
+							</Button>
+						</div>
+					{/each}
+				{/if}
 			</div>
 			<div class="ms-auto flex shrink-0 items-center gap-1">
 				<Button
@@ -1002,22 +1087,12 @@
 
 		<div class="flex min-h-0 flex-1">
 		<div class="relative min-h-0 min-w-0 flex-1 bg-(--workspace-stage,var(--sidebar))">
-			{#if openFile}
-				<!-- Files open over the panes; the terminals stay connected underneath. -->
-				<div class="absolute inset-1.5 z-20">
-					<FileViewer
-						{machineId}
-						session={session.name}
-						root={openFile.root}
-						path={openFile.path}
-						onclose={() => {
-							openFile = null;
-							const paneId = tab ? activePane[tab.id] : undefined;
-							if (tab && paneId) void focusPane(tab.id, paneId);
-						}}
-					/>
+			{#each fileTabs as f (fileKey(f))}
+				<!-- File tabs cover the panes while shown; the terminals stay connected underneath. -->
+				<div class={cn('absolute inset-1.5 z-20', activeFile !== fileKey(f) && 'invisible')} inert={activeFile !== fileKey(f)} data-file-tab={fileKey(f)}>
+					<FileViewer {machineId} session={session.name} root={f.root} path={f.path} onback={backToTerminals} onclose={() => closeFileTab(f)} />
 				</div>
-			{/if}
+			{/each}
 			{#each alive as t (t.id)}
 				{@const current = t.id === tab?.id}
 				{@const max = maximized[t.id] ?? null}
@@ -1224,7 +1299,7 @@
 					session={session.name}
 					{preferredRoot}
 					selected={openFile}
-					onopen={(f) => (openFile = f)}
+					onopen={openFileTab}
 					onterminal={terminalIn}
 					onclose={() => setFilesOpen(false)}
 				/>
