@@ -671,9 +671,14 @@
 {/snippet}
 
 {#snippet agentRow(a: AgentView, showSpace: boolean)}
+	{@const current = !!tab && activePane[tab.id] === a.paneId && tab.panes.some((p) => p.id === a.paneId)}
 	<button
 		type="button"
-		class="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+		class={cn(
+			'flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+			current && 'bg-sidebar-accent text-sidebar-accent-foreground'
+		)}
+		aria-current={current ? 'true' : undefined}
 		onclick={() => jumpToAgent(a)}
 		title="Go to {a.name}"
 	>
