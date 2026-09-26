@@ -208,8 +208,6 @@
 		historySearch[paneId] = false;
 		document.querySelector<HTMLTextAreaElement>(`[data-pane="${CSS.escape(paneId)}"] textarea`)?.focus();
 	}
-	/** Each pane's live terminal (for Redraw). */
-	let views = $state<Record<string, TerminalView | undefined>>({});
 
 	/** Per pane: watch instead of control, or take control over from its current controller. */
 	let paneMode = $state<Record<string, 'watch' | 'takeover'>>({});
@@ -422,7 +420,7 @@
 				{ label: 'Split down', icon: SquareSplitVerticalIcon, shortcut: keys('-'), run: () => void splitPane(t.id, paneId, 'down') },
 				{ label: 'Show history', icon: HistoryIcon, shortcut: keys('H'), run: () => (historyOpen[paneId] = true) },
 				{ label: 'Browse files here', icon: FolderTreeIcon, run: () => browseHere(paneId) },
-				{ label: 'Redraw', icon: RefreshCwIcon, run: () => views[paneId]?.redraw() },
+				{ label: 'Refresh', icon: RefreshCwIcon, shortcut: keys('R'), run: () => reconnect(paneId) },
 				{
 					label: 'Search in history',
 					icon: SearchIcon,
@@ -681,7 +679,8 @@
 		else if (code === 'KeyF' && paneId) {
 			historySearch[paneId] = true;
 			historyOpen[paneId] = true;
-		} else if (code === 'KeyH' && paneId) {
+		} else if (code === 'KeyR' && paneId) reconnect(paneId);
+		else if (code === 'KeyH' && paneId) {
 			if (historyOpen[paneId]) closeHistory(paneId);
 			else historyOpen[paneId] = true;
 		}
@@ -710,6 +709,7 @@
 		['Maximize or restore pane', 'Z'],
 		['Close pane', 'X'],
 		['Show or hide history', 'H'],
+		['Refresh the pane (reconnect and redraw)', 'R'],
 		['Show or hide files', 'E'],
 		['Search in history', 'F'],
 		['New tab', 'T'],
@@ -1198,6 +1198,9 @@
 															(active || max === r.paneId) && 'opacity-100'
 														)}
 													>
+														<Button size="icon-sm" variant="ghost" class="size-6" aria-label="Refresh" title="Refresh: reconnect and redraw ({keys('R')})" onclick={() => reconnect(r.paneId)}>
+															<RefreshCwIcon />
+														</Button>
 														<Button size="icon-sm" variant="ghost" class="size-6" aria-label="Split right" title="Split right ({keys('\\')})" onclick={() => splitPane(t.id, r.paneId, 'right')}>
 															<SquareSplitHorizontalIcon />
 														</Button>
@@ -1245,7 +1248,6 @@
 									{/if}
 									{#key `${r.paneId}:${mode}:${transport}:${attempts[r.paneId] ?? 0}`}
 										<TerminalView
-											bind:this={views[r.paneId]}
 											{machineId}
 											session={session.name}
 											target={r.paneId}

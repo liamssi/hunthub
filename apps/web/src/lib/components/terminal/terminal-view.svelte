@@ -82,8 +82,8 @@
 		return out;
 	}
 
-	/** The live terminal, for appearance changes and redraws; set while connected. */
-	let live: { term: Terminal; refit: () => void; redraw: () => void } | null = null;
+	/** The live terminal, for appearance changes; set while connected. */
+	let live: { term: Terminal; refit: () => void } | null = null;
 
 	/** Resizes settle this long before the terminal follows (a dragged edge sends one resize). */
 	const RESIZE_DEBOUNCE_MS = 150;
@@ -91,11 +91,6 @@
 	const FULL_FRAME_WAIT_MS = 2000;
 	/** Clears the screen and homes the cursor: a full redraw after a resize starts clean. */
 	const CLEAR_SCREEN = new TextEncoder().encode('\x1b[H\x1b[2J');
-
-	/** Asks the program in the pane to redraw itself (like tmux's refresh), and repaints cleanly. */
-	export function redraw() {
-		live?.redraw();
-	}
 
 
 	/** Waits for the chosen font, so xterm measures its cells with the real glyphs. */
@@ -310,20 +305,7 @@
 					term.refresh(0, term.rows - 1);
 				}
 			};
-			// A size change makes the program redraw (SIGWINCH) and Herdr send a full frame;
-			// nudging the height and back does that on demand.
-			let nudge: ReturnType<typeof setTimeout> | undefined;
-			const redraw = () => {
-				if (!term || view !== 'pane' || mode !== 'control') return term?.refresh(0, term.rows - 1);
-				const { cols, rows } = size();
-				clearTimeout(nudge);
-				send({ type: 'resize', cols, rows: Math.max(rows - 1, 4) });
-				nudge = setTimeout(() => {
-					expectFullFrame();
-					send({ type: 'resize', cols, rows });
-				}, 120);
-			};
-			live = { term, refit, redraw };
+			live = { term, refit };
 			observer = new ResizeObserver(() => {
 				clearTimeout(resizeTimer);
 				resizeTimer = setTimeout(refit, RESIZE_DEBOUNCE_MS);
