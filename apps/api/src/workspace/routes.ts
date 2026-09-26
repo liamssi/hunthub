@@ -7,11 +7,17 @@ import { validateSessionName } from '@hunthub/shared/console';
 import type { Pin } from '@hunthub/shared/machines';
 import { db } from '../db';
 import { machine, userPin } from '../db/schema';
+import { recentAttention } from '../herdr/attention';
 import { allHerdr } from '../herdr/state';
 import { type AuthVariables, requireUser } from '../lib/auth-guard';
 
 /** Herdr state of every connected machine, by machine id (live updates arrive on the "agents" topic). */
 export const herdrRoutes = new Hono<{ Variables: AuthVariables }>().use(requireUser).get('/', (c) => c.json({ machines: allHerdr() }));
+
+/** Recent attention events (agents that needed someone or finished), newest first. */
+export const attentionRoutes = new Hono<{ Variables: AuthVariables }>()
+	.use(requireUser)
+	.get('/', async (c) => c.json({ events: await recentAttention(60) }));
 
 const toPin = (row: typeof userPin.$inferSelect): Pin => ({
 	id: row.id,

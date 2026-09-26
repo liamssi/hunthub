@@ -11,7 +11,7 @@ import { liveRoutes } from './live/routes';
 import { machineRoutes, settingsRoutes } from './machines/routes';
 import { installRoutes } from './runner/install';
 import { runnerRoutes } from './runner/routes';
-import { herdrRoutes, pinRoutes } from './workspace/routes';
+import { attentionRoutes, herdrRoutes, pinRoutes } from './workspace/routes';
 
 export const app = new Hono().basePath('/api');
 
@@ -24,6 +24,7 @@ app.route('/machines', consoleRoutes);
 app.route('/agents', agentRoutes);
 app.route('/herdr', herdrRoutes);
 app.route('/pins', pinRoutes);
+app.route('/attention', attentionRoutes);
 app.route('/settings', settingsRoutes);
 app.route('/runner', runnerRoutes);
 app.route('/', installRoutes);

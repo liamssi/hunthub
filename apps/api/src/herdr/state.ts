@@ -5,6 +5,7 @@ import type { AgentView, MachineHerdrView, SessionView } from '@hunthub/shared/m
 import type { HerdrSessionReport } from '@hunthub/shared/runner-protocol';
 import { publish } from '../live/hub';
 import { runFor, sweep } from './agent-runs';
+import { detectAttention, raiseAttention } from './attention';
 import { sessionView, sortAgents } from './view';
 
 type MachineState = {
@@ -43,7 +44,11 @@ export function applySession(machineId: string, report: HerdrSessionReport) {
 	const m = machines.get(machineId);
 	if (!m) return;
 	const view = sessionView({ id: machineId, name: m.name }, report);
+	const before = m.sessions.get(report.name);
 	m.sessions.set(report.name, view);
+	if (before) {
+		void raiseAttention(detectAttention(machineId, m.name, before, view)).catch((e) => console.error('attention: failed to record', e));
+	}
 	// Agents of a stopped session come back with their names when it starts again.
 	if (view.state === 'running') {
 		const names = new Set(view.workspaces.flatMap((w) => w.agents.flatMap((a) => (a.herdrName ? [a.herdrName] : []))));

@@ -10,6 +10,8 @@
 
 	import { page } from '$app/state';
 	import { untrack } from 'svelte';
+	import InboxSheet from '$lib/components/attention/inbox-sheet.svelte';
+	import { useAttention } from '$lib/attention.svelte';
 	import { useFleet } from '$lib/fleet.svelte';
 	import { loadPins } from '$lib/pins.svelte';
 
@@ -23,7 +25,12 @@
 	$effect(() => {
 		if (!signedIn) return;
 		untrack(() => void loadPins());
-		return useFleet();
+		const offFleet = useFleet();
+		const offAttention = useAttention();
+		return () => {
+			offFleet();
+			offAttention();
+		};
 	});
 </script>
 
@@ -35,6 +42,7 @@
 {#if data.user}
 	<Sidebar.Provider open={data.sidebarOpen}>
 		<AppSidebar user={data.user} />
+		<InboxSheet />
 		<Sidebar.Inset class={immersive ? 'h-svh overflow-hidden' : undefined}>
 			{#if immersive}
 				{@render children()}

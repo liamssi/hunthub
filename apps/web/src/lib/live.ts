@@ -32,6 +32,8 @@ function topicsOf(message: LiveServerMessage): LiveTopic[] {
 			return ['machines'];
 		case 'machine.herdr':
 			return ['agents', `machine:${message.machineId}`];
+		case 'attention':
+			return ['agents'];
 		default:
 			return [];
 	}

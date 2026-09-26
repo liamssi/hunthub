@@ -8,6 +8,7 @@
 	import UsersIcon from '@lucide/svelte/icons/users';
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
 	import NavMain, { type NavSection } from './nav-main.svelte';
+	import NavInbox from './nav-inbox.svelte';
 	import NavPins from './nav-pins.svelte';
 	import NavUser from './nav-user.svelte';
 
@@ -62,6 +63,7 @@
 		</Sidebar.Menu>
 	</Sidebar.Header>
 	<Sidebar.Content>
+		<NavInbox />
 		<NavMain {sections} />
 		<NavPins />
 	</Sidebar.Content>

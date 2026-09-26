@@ -52,6 +52,7 @@
 	import { Kbd } from '$lib/components/ui/kbd/index.js';
 	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
 	import { adoptAgent, consoleCall, consoleRequest, stopAgent } from '$lib/console';
+	import { setWatchingProbe } from '$lib/attention.svelte';
 	import { prefetchHistory } from '$lib/pane-history';
 	import { appearance, themeColors, workspaceVars } from '$lib/terminal-appearance.svelte';
 	import { cn } from '$lib/utils.js';
@@ -679,22 +680,11 @@
 	const watching = (paneId: string) =>
 		document.hasFocus() && !!tab && tab.panes.some((p) => p.id === paneId) && activePane[tab.id] === paneId;
 
-	// A toast when an agent starts needing you or finishes, unless you're looking at it.
-	const lastStatus = new Map<string, AgentStatus>();
-	let primed = false;
+	// Attention toasts come from the hub for every session (lib/attention.svelte.ts);
+	// while this session is shown, it tells them which pane you're looking at.
 	$effect(() => {
-		const list = agents;
-		untrack(() => {
-			for (const a of list) {
-				const previous = lastStatus.get(a.paneId);
-				lastStatus.set(a.paneId, a.status);
-				if (!primed || !previous || previous === a.status || watching(a.paneId)) continue;
-				const action = { label: 'Go', onClick: () => jumpToAgent(a) };
-				if (a.status === 'blocked') toast.warning(`${a.name} needs you`, { description: a.workspaceLabel, action });
-				else if (a.status === 'done') toast.success(`${a.name} finished`, { description: a.workspaceLabel, action });
-			}
-			primed = true;
-		});
+		if (!active) return;
+		return setWatchingProbe((m, s, paneId) => m === machineId && s === session.name && watching(paneId));
 	});
 
 	// --- Go to… switcher ---------------------------------------------------------

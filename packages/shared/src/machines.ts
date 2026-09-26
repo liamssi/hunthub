@@ -166,7 +166,24 @@ export type LiveServerMessage =
 	| { type: 'machine.stats'; machineId: string; sample: StatsSample }
 	| { type: 'enroll.completed'; tokenId: string; machineId: string }
 	| { type: 'machine.herdr'; machineId: string; herdr: MachineHerdrView }
+	| { type: 'attention'; event: AttentionEvent }
 	| { type: 'error'; message: string };
+
+/** An agent started needing you (it's asking something) or finished its work. */
+export type AttentionKind = 'needs_you' | 'finished';
+
+export type AttentionEvent = {
+	id: number;
+	machineId: string;
+	machineName: string;
+	session: string;
+	workspaceLabel: string;
+	paneId: string;
+	/** What the agent was called then. */
+	agent: string;
+	kind: AttentionKind;
+	at: string;
+};
 
 /** A session (paneId null) or terminal a user pinned to their sidebar. */
 export type Pin = { id: number; machineId: string; session: string; paneId: string | null; label: string; createdAt: string };

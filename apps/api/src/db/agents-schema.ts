@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { check, index, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { bigint, check, index, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { user } from './auth-schema';
 import { machine } from './machines-schema';
 
@@ -35,5 +35,31 @@ export const agentRun = pgTable(
 		uniqueIndex('agent_run_live_name_idx').on(t.machineId, t.session, t.name).where(sql`${t.endedAt} is null`),
 		index('agent_run_user_idx').on(t.userId),
 		index('agent_run_created_idx').on(t.createdAt)
+	]
+);
+
+/**
+ * When an agent started needing someone (it asks something) or finished its
+ * work, for the notifications inbox. Kept for two weeks.
+ */
+export const attentionEvent = pgTable(
+	'attention_event',
+	{
+		id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+		machineId: uuid('machine_id')
+			.notNull()
+			.references(() => machine.id, { onDelete: 'cascade' }),
+		session: text('session').notNull(),
+		workspaceLabel: text('workspace_label').notNull(),
+		paneId: text('pane_id').notNull(),
+		agent: text('agent').notNull(),
+		/** needs_you | finished */
+		kind: text('kind').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+	},
+	(t) => [
+		check('attention_event_kind_check', sql`${t.kind} in ('needs_you', 'finished')`),
+		index('attention_event_created_idx').on(t.createdAt),
+		index('attention_event_machine_idx').on(t.machineId)
 	]
 );

@@ -134,3 +134,10 @@ Decided without a check-in, like M3c.
 - **Integrations:** the machine page lists Herdr's agent integrations (`integration.list` through any running session; they belong to the machine's user) with install, update and remove, each confirmed and audited. Agents not on the machine are folded away.
 - Roles (who may change what) are still later: every signed-in user has the machine's console access; only admins change it.
 
+## Attention as built (M5, 2026-09-27)
+
+- **The hub notices:** comparing each session's consecutive views, an agent that becomes blocked raises `needs_you` and one that goes from working to done or idle raises `finished` (a session's first report after a reconnect raises nothing; the same agent and kind at most once a minute). Events are stored (`attention_event`, two weeks) and pushed live on the `agents` topic.
+- **Every browser hears it:** a toast (Open, and Reply for needs-you), unless you're looking at that pane in the workspace (the workspace answers a "watching" probe); a desktop notification when the tab is in the background, if turned on in the inbox (per browser). The workspace's own per-session toasts were replaced by this.
+- **Inbox** (sidebar, badge: agents needing you in red, else unread events): agents asking something now, each with the bottom of its screen (read live every 3 s while open) and quick replies: numbered choices found on the screen (sent as that key), Enter, Esc, and a reply box (text + Enter); then the recent events. Replies type into the pane, so they need the machine's Agents access.
+- Herdr has no "what is it asking" field; the screen is the source.
+

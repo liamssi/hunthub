@@ -50,6 +50,13 @@
       "when": 1790463149246,
       "tag": "0006_majestic_ultimates",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790464015841,
+      "tag": "0007_many_proteus",
+      "breakpoints": true
     }
   ]
 }

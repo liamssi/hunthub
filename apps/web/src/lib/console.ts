@@ -116,6 +116,10 @@ export const typeIntoPane = (machineId: string, session: string, paneId: string,
 		body: JSON.stringify({ method: 'pane.send_input', params: { pane_id: paneId, text, ...(enter && { keys: ['Enter'] }) } })
 	});
 
+/** Presses keys in a pane (Herdr key names: Enter, Esc, Up, C-c…). */
+export const sendKeys = (machineId: string, session: string, paneId: string, keys: string[]) =>
+	send(`${sessionUrl(machineId, session)}/call`, { method: 'POST', body: JSON.stringify({ method: 'pane.send_input', params: { pane_id: paneId, keys } }) });
+
 /** Stops the agent in a pane (Ctrl+C until it exits). Resolves whether it stopped. */
 export async function stopAgent(machineId: string, session: string, paneId: string, label: string): Promise<boolean | null> {
 	const out = await runWithResult('Stop agent', `${sessionUrl(machineId, session)}/call`, {
