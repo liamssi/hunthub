@@ -9,7 +9,8 @@
 		'/admin/users': 'Users',
 		'/admin/settings': 'Settings',
 		'/account': 'Account',
-		'/machines': 'Machines'
+		'/machines': 'Machines',
+		'/agents': 'Agents'
 	};
 
 	/** Label for a path, including detail pages that name what they show. */

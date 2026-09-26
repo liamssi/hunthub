@@ -1,4 +1,8 @@
-import type { LiveServerMessage, Machine } from '@hunthub/shared/machines';
+import type { LiveServerMessage, Machine, MachineHerdrView } from '@hunthub/shared/machines';
+
+export function countAgents(herdr: MachineHerdrView): number {
+	return herdr.sessions.reduce((n, s) => n + s.workspaces.reduce((m, w) => m + w.agents.length, 0), 0);
+}
 
 /** Largest disk usage in percent, or null without stats. */
 export function diskPercent(m: Machine): number | null {
@@ -26,6 +30,9 @@ export function applyLive(m: Machine, message: LiveServerMessage): Machine | nul
 				lastSeenAt: message.lastSeenAt,
 				stats: message.connection === 'offline' ? null : m.stats
 			};
+		case 'machine.herdr':
+			if (message.machineId !== m.id) return m;
+			return { ...m, agents: message.herdr.supported ? countAgents(message.herdr) : null };
 		case 'machine.stats':
 			return message.machineId === m.id ? { ...m, stats: message.sample, connection: 'online' } : m;
 		default:

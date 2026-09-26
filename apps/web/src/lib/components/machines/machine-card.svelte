@@ -47,6 +47,9 @@
 			{:else}
 				<span>Last seen {formatRelative(machine.lastSeenAt, now)}</span>
 			{/if}
+			{#if machine.agents !== null}
+				<span>{machine.agents} {machine.agents === 1 ? 'agent' : 'agents'}</span>
+			{/if}
 		</Card.Footer>
 	</Card.Root>
 </a>

@@ -1,7 +1,8 @@
 <script lang="ts">
 	import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
 	import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
-	import type { Machine } from '@hunthub/shared/machines';
+	import type { Machine, MachineHerdrView } from '@hunthub/shared/machines';
+	import SessionsCard from '$lib/components/agents/sessions-card.svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { Badge } from '$lib/components/ui/badge/index.js';
@@ -16,11 +17,13 @@
 
 	let { data } = $props();
 
-	// Starts from the loaded data; live updates overwrite it.
+	// Start from the loaded data; live updates overwrite them.
 	let machine = $derived<Machine>(data.machine);
+	let herdr = $derived<MachineHerdrView>(data.herdr);
 
 	$effect(() =>
 		subscribeLive(`machine:${data.machine.id}`, (message) => {
+			if (message.type === 'machine.herdr' && message.machineId === machine.id) herdr = message.herdr;
 			const next = applyLive(machine, message);
 			if (next) machine = next;
 			else goto('/machines');
@@ -79,6 +82,8 @@
 		</Card.Content>
 	</Card.Root>
 </div>
+
+<SessionsCard {machine} {herdr} />
 
 <StatsCharts machineId={machine.id} initial={data.series} />
 

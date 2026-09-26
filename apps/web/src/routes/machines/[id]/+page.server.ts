@@ -1,18 +1,20 @@
 import { error } from '@sveltejs/kit';
-import type { Machine, StatsSeries } from '@hunthub/shared/machines';
+import type { Machine, MachineHerdrView, StatsSeries } from '@hunthub/shared/machines';
 import { apiFetch } from '$lib/server/api';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async (event) => {
 	event.depends('app:machine');
 	const id = encodeURIComponent(event.params.id);
-	const [machineRes, statsRes] = await Promise.all([
+	const [machineRes, statsRes, herdrRes] = await Promise.all([
 		apiFetch(event, `/api/machines/${id}`),
-		apiFetch(event, `/api/machines/${id}/stats?range=1h`)
+		apiFetch(event, `/api/machines/${id}/stats?range=1h`),
+		apiFetch(event, `/api/machines/${id}/herdr`)
 	]);
 	if (machineRes.status === 404) error(404, 'Machine not found.');
 	if (!machineRes.ok) error(machineRes.status, 'Could not load the machine.');
 	const { machine }: { machine: Machine } = await machineRes.json();
 	const series: StatsSeries | null = statsRes.ok ? await statsRes.json() : null;
-	return { machine, series };
+	const herdr: MachineHerdrView = herdrRes.ok ? await herdrRes.json() : { supported: false, sessions: [] };
+	return { machine, series, herdr };
 };

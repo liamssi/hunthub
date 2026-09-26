@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ComponentProps } from 'svelte';
+	import BotIcon from '@lucide/svelte/icons/bot';
 	import CrosshairIcon from '@lucide/svelte/icons/crosshair';
 	import HouseIcon from '@lucide/svelte/icons/house';
 	import ServerIcon from '@lucide/svelte/icons/server';
@@ -21,7 +22,8 @@
 			label: 'Platform',
 			items: [
 				{ title: 'Home', url: '/', icon: HouseIcon },
-				{ title: 'Machines', url: '/machines', icon: ServerIcon }
+				{ title: 'Machines', url: '/machines', icon: ServerIcon },
+				{ title: 'Agents', url: '/agents', icon: BotIcon }
 			]
 		},
 		...(user.role === 'admin'
