@@ -25,43 +25,13 @@
 		session,
 		paneId,
 		search: searchOnOpen = false,
-		liveRows,
 		onclose
-	}: {
-		machineId: string;
-		session: string;
-		paneId: string;
-		search?: boolean;
-		/** The live rows left visible below the panel (pinned prompt); history stops where they begin. */
-		liveRows?: () => string[];
-		onclose: () => void;
-	} = $props();
+	}: { machineId: string; session: string; paneId: string; search?: boolean; onclose: () => void } = $props();
 
 	/** Newer output exists that couldn't be added in place (a program redrew its screen). */
 	let stale = $state(false);
 	let redraw: (() => void) | null = null;
 
-	const plain = (line: string) =>
-		line
-			.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
-			.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
-			.replace(/\x1b[()][0-9A-Za-z]/g, '')
-			.trimEnd();
-
-	/**
-	 * History ends with the pane's current screen; under a pinned prompt the
-	 * live rows already show its last part, so those lines are left out.
-	 */
-	function withoutLiveTail(lines: string[]): string[] {
-		const live = liveRows?.() ?? [];
-		const first = live.map((l) => l.trimEnd()).find((l) => l.length >= 2);
-		if (!first) return lines;
-		const stop = Math.max(0, lines.length - live.length - 3);
-		for (let i = lines.length - 1; i >= stop; i--) {
-			if (plain(lines[i]!).startsWith(first)) return lines.slice(0, i);
-		}
-		return lines;
-	}
 
 	// Search through the history (Ctrl+F in the panel, or opened with Alt+Shift+F).
 	let searchOpen = $state(false);
@@ -123,7 +93,7 @@
 		redraw = () => draw(latest);
 		function show(historyText: string, first: boolean) {
 			if (!term) return;
-			const text = withoutLiveTail(historyText.split('\r\n')).join('\r\n');
+			const text = historyText;
 			latest = text;
 			if (first) return draw(text);
 			if (text === lastText) return;

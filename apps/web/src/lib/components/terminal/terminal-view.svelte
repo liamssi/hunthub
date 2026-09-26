@@ -82,32 +82,21 @@
 		return out;
 	}
 
-	/** The live terminal, for appearance changes; set while connected. */
-	let live: { term: Terminal; refit: () => void } | null = null;
+	/** The live terminal, for appearance changes and redraws; set while connected. */
+	let live: { term: Terminal; refit: () => void; redraw: () => void } | null = null;
 
-	/**
-	 * Where the last `count` rows begin, in pixels from the top of this terminal's box,
-	 * so something laid over the rest ends exactly on a row boundary.
-	 */
-	export function bottomRowsTop(count: number): number | null {
-		const term = live?.term;
-		const screen = container?.querySelector<HTMLElement>('.xterm-screen');
-		if (!term || !screen || !term.rows) return null;
-		const rowHeight = screen.clientHeight / term.rows;
-		return Math.round(screen.offsetTop + Math.max(0, term.rows - count) * rowHeight);
+	/** Resizes settle this long before the terminal follows (a dragged edge sends one resize). */
+	const RESIZE_DEBOUNCE_MS = 150;
+	/** How long to wait for the full redraw a resize brings before accepting partial updates again. */
+	const FULL_FRAME_WAIT_MS = 2000;
+	/** Clears the screen and homes the cursor: a full redraw after a resize starts clean. */
+	const CLEAR_SCREEN = new TextEncoder().encode('\x1b[H\x1b[2J');
+
+	/** Asks the program in the pane to redraw itself (like tmux's refresh), and repaints cleanly. */
+	export function redraw() {
+		live?.redraw();
 	}
 
-	/** The text of the last `count` rows on screen (e.g. what stays visible under a history panel). */
-	export function bottomRows(count: number): string[] {
-		const term = live?.term;
-		if (!term) return [];
-		const buffer = term.buffer.active;
-		const out: string[] = [];
-		for (let y = Math.max(0, term.rows - count); y < term.rows; y++) {
-			out.push(buffer.getLine(buffer.viewportY + y)?.translateToString(true) ?? '');
-		}
-		return out;
-	}
 
 	/** Waits for the chosen font, so xterm measures its cells with the real glyphs. */
 	async function fontReady() {
@@ -167,6 +156,18 @@
 		let ws: WebSocket | null = null;
 		let observer: ResizeObserver | null = null;
 		let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+		// After a resize, partial updates computed for the old size are dropped and the
+		// full redraw that follows (Herdr sends one) starts from a cleared screen, so text
+		// the terminal rewrapped for the new size can't linger.
+		let awaitingFull = false;
+		let awaitTimer: ReturnType<typeof setTimeout> | undefined;
+		const expectFullFrame = () => {
+			// Watching over the CLI doesn't pass resizes on, so no full frame would follow.
+			if (view !== 'pane' || (transport === 'cli' && mode !== 'control')) return;
+			awaitingFull = true;
+			clearTimeout(awaitTimer);
+			awaitTimer = setTimeout(() => (awaitingFull = false), FULL_FRAME_WAIT_MS);
+		};
 		setState({ phase: 'connecting' });
 
 		void (async () => {
@@ -234,7 +235,7 @@
 			ws = new WebSocket(`${proto}//${location.host}/api/machines/${machineId}/terminal?${params}`);
 
 			ws.onmessage = (event) => {
-				let msg: { type?: string; bytes?: string; reason?: string };
+				let msg: { type?: string; bytes?: string; reason?: string; full?: boolean };
 				try {
 					msg = JSON.parse(String(event.data));
 				} catch {
@@ -242,6 +243,13 @@
 				}
 				if (msg.type === 'frame' && msg.bytes) {
 					if (state.phase !== 'live') setState({ phase: 'live' });
+					let clear = false;
+					if (awaitingFull) {
+						if (!msg.full) return; // Drawn for the old size; the full redraw is on its way.
+						awaitingFull = false;
+						clearTimeout(awaitTimer);
+						clear = true;
+					}
 					let bytes = fromBase64(msg.bytes);
 					if (hostBackground === undefined && (msg as { full?: boolean }).full) {
 						hostBackground = learnHostBackground(new TextDecoder().decode(bytes));
@@ -249,6 +257,12 @@
 					}
 					// Streaming decode keeps a character split across two frames intact.
 					if (hostPattern) bytes = encoder.encode(decoder.decode(bytes, { stream: true }).replace(hostPattern, (_, prefix: string) => `${prefix}49`));
+					if (clear) {
+						const joined = new Uint8Array(CLEAR_SCREEN.length + bytes.length);
+						joined.set(CLEAR_SCREEN);
+						joined.set(bytes, CLEAR_SCREEN.length);
+						bytes = joined;
+					}
 					term?.write(bytes);
 				} else if (msg.type === 'closed') {
 					setState({ phase: 'closed', reason: msg.reason });
@@ -283,16 +297,36 @@
 				});
 			}
 
+			const size = () => ({ cols: Math.max(term!.cols, 10), rows: Math.max(term!.rows, 4) });
 			const refit = () => {
 				if (!term) return;
 				const { cols, rows } = term;
 				fit.fit();
-				if (term.cols !== cols || term.rows !== rows) send({ type: 'resize', cols: Math.max(term.cols, 10), rows: Math.max(term.rows, 4) });
+				if (term.cols !== cols || term.rows !== rows) {
+					expectFullFrame();
+					send({ type: 'resize', ...size() });
+				} else {
+					// Same cell grid (e.g. a few pixels): just repaint what's there.
+					term.refresh(0, term.rows - 1);
+				}
 			};
-			live = { term, refit };
+			// A size change makes the program redraw (SIGWINCH) and Herdr send a full frame;
+			// nudging the height and back does that on demand.
+			let nudge: ReturnType<typeof setTimeout> | undefined;
+			const redraw = () => {
+				if (!term || view !== 'pane' || mode !== 'control') return term?.refresh(0, term.rows - 1);
+				const { cols, rows } = size();
+				clearTimeout(nudge);
+				send({ type: 'resize', cols, rows: Math.max(rows - 1, 4) });
+				nudge = setTimeout(() => {
+					expectFullFrame();
+					send({ type: 'resize', cols, rows });
+				}, 120);
+			};
+			live = { term, refit, redraw };
 			observer = new ResizeObserver(() => {
 				clearTimeout(resizeTimer);
-				resizeTimer = setTimeout(refit, 100);
+				resizeTimer = setTimeout(refit, RESIZE_DEBOUNCE_MS);
 			});
 			observer.observe(container);
 		})();
@@ -301,6 +335,7 @@
 			disposed = true;
 			live = null;
 			clearTimeout(resizeTimer);
+			clearTimeout(awaitTimer);
 			observer?.disconnect();
 			ws?.close();
 			term?.dispose();

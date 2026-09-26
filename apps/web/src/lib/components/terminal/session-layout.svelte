@@ -12,11 +12,10 @@
 	import FileCodeIcon from '@lucide/svelte/icons/file-code';
 	import FolderTreeIcon from '@lucide/svelte/icons/folder-tree';
 	import HistoryIcon from '@lucide/svelte/icons/history';
+	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import { toast } from 'svelte-sonner';
 	import PencilIcon from '@lucide/svelte/icons/pencil';
-	import PinIcon from '@lucide/svelte/icons/pin';
-	import PinOffIcon from '@lucide/svelte/icons/pin-off';
 	import SquareSplitHorizontalIcon from '@lucide/svelte/icons/square-split-horizontal';
 	import SquareSplitVerticalIcon from '@lucide/svelte/icons/square-split-vertical';
 	import XIcon from '@lucide/svelte/icons/x';
@@ -189,33 +188,10 @@
 	let maximized = $state<Record<string, string | null>>({});
 	let states = $state<Record<string, TerminalState>>({});
 	let attempts = $state<Record<string, number>>({});
-	// Pinned prompt: scrolling up opens the pane's history above the live terminal,
-	// so its bottom (the prompt, or an agent's input box) stays in view.
-	const PIN_KEY = 'hunthub.workspace.pinPrompt';
-	let pinDefault = $state(true);
-	$effect(() => {
-		try {
-			pinDefault = localStorage.getItem(PIN_KEY) !== 'off';
-		} catch {
-			// Only a convenience.
-		}
-	});
-	let pinned = $state<Record<string, boolean>>({});
+	// Scrolling up opens a pane's history over it (kept by HuntHub, preloaded).
 	let historyOpen = $state<Record<string, boolean>>({});
 	/** Panes whose history opened for searching (focuses the search box). */
 	let historySearch = $state<Record<string, boolean>>({});
-	const isPinned = (paneId: string) => pinned[paneId] ?? pinDefault;
-	function togglePin(paneId: string) {
-		const next = !isPinned(paneId);
-		pinned[paneId] = next;
-		pinDefault = next;
-		try {
-			localStorage.setItem(PIN_KEY, next ? 'on' : 'off');
-		} catch {
-			// Only a convenience.
-		}
-		if (!next) historyOpen[paneId] = false;
-	}
 	// History is fetched in the background for the panes on screen, so scrolling up is instant.
 	const shownPaneIds = $derived(tab ? tab.panes.map((p) => p.id).join(',') : '');
 	$effect(() => {
@@ -232,16 +208,8 @@
 		historySearch[paneId] = false;
 		document.querySelector<HTMLTextAreaElement>(`[data-pane="${CSS.escape(paneId)}"] textarea`)?.focus();
 	}
-	/** Live rows left visible under the history panel. */
-	const LIVE_ROWS = 6;
-	/** Each pane's live terminal (the history panel reads the rows still visible under it). */
+	/** Each pane's live terminal (for Redraw). */
 	let views = $state<Record<string, TerminalView | undefined>>({});
-	/** The pinned history panel ends exactly where the live rows below it begin. */
-	function historyHeight(paneId: string): string {
-		void appearance.size; // Re-measured when the font size changes.
-		const top = views[paneId]?.bottomRowsTop(LIVE_ROWS);
-		return top ? `${top}px` : `calc(100% - ${Math.round(appearance.size * 1.1 * LIVE_ROWS) + 18}px)`;
-	}
 
 	/** Per pane: watch instead of control, or take control over from its current controller. */
 	let paneMode = $state<Record<string, 'watch' | 'takeover'>>({});
@@ -454,6 +422,7 @@
 				{ label: 'Split down', icon: SquareSplitVerticalIcon, shortcut: keys('-'), run: () => void splitPane(t.id, paneId, 'down') },
 				{ label: 'Show history', icon: HistoryIcon, shortcut: keys('H'), run: () => (historyOpen[paneId] = true) },
 				{ label: 'Browse files here', icon: FolderTreeIcon, run: () => browseHere(paneId) },
+				{ label: 'Redraw', icon: RefreshCwIcon, run: () => views[paneId]?.redraw() },
 				{
 					label: 'Search in history',
 					icon: SearchIcon,
@@ -1229,19 +1198,6 @@
 															(active || max === r.paneId) && 'opacity-100'
 														)}
 													>
-														<Button
-															size="icon-sm"
-															variant="ghost"
-															class="size-6"
-															aria-pressed={isPinned(r.paneId)}
-															aria-label={isPinned(r.paneId) ? 'Unpin prompt' : 'Pin prompt'}
-															title={isPinned(r.paneId)
-																? 'Prompt pinned: scrolling up shows history above it. Click to let history cover the whole pane.'
-																: 'History covers the whole pane when you scroll up. Click to keep the prompt visible below it.'}
-															onclick={() => togglePin(r.paneId)}
-														>
-															{#if isPinned(r.paneId)}<PinIcon />{:else}<PinOffIcon />{/if}
-														</Button>
 														<Button size="icon-sm" variant="ghost" class="size-6" aria-label="Split right" title="Split right ({keys('\\')})" onclick={() => splitPane(t.id, r.paneId, 'right')}>
 															<SquareSplitHorizontalIcon />
 														</Button>
@@ -1277,16 +1233,12 @@
 								</ContextMenu.Root>
 								<div class="relative min-h-0 flex-1">
 									{#if historyOpen[r.paneId]}
-										<div
-											class="absolute inset-x-0 top-0 z-10"
-											style:height={isPinned(r.paneId) ? historyHeight(r.paneId) : '100%'}
-										>
+										<div class="absolute inset-0 z-10">
 											<HistoryPanel
 												{machineId}
 												session={session.name}
 												paneId={r.paneId}
 												search={historySearch[r.paneId] ?? false}
-												liveRows={isPinned(r.paneId) ? () => views[r.paneId]?.bottomRows(LIVE_ROWS) ?? [] : undefined}
 												onclose={() => closeHistory(r.paneId)}
 											/>
 										</div>
