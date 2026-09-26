@@ -100,7 +100,7 @@ export function runConnection({ hubUrl, log, ...opts }: Options): Promise<void> 
 					type: 'hello',
 					protocol: RUNNER_PROTOCOL_VERSION,
 					runnerVersion,
-					capabilities: ['stats', 'herdr', 'terminal:cli', 'terminal:native'],
+					capabilities: ['stats', 'herdr', 'terminal:cli', 'terminal:native', 'terminal:session'],
 					host
 				});
 			};
@@ -126,7 +126,7 @@ export function runConnection({ hubUrl, log, ...opts }: Options): Promise<void> 
 						gateway.start();
 						const g = gateway;
 						terminals?.closeAll();
-						terminals = new TerminalManager(send, (name) => g.hasSession(name), log);
+						terminals = new TerminalManager(send, (name) => g.hasSession(name), log, (name) => g.isRunning(name));
 						// Host details rarely change; check once a minute.
 						timers.push(
 							setInterval(() => {

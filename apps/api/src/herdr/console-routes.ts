@@ -110,7 +110,9 @@ function sameOrigin(origin: string | undefined, host: string | undefined): boole
 
 const terminalQuery = z.object({
 	session: z.string(),
-	target: z.string().regex(/^[A-Za-z0-9:_.-]{1,64}$/),
+	view: z.enum(['pane', 'session']).default('pane'),
+	/** The pane; not used by the session view. */
+	target: z.string().regex(/^[A-Za-z0-9:_.-]{1,64}$/).optional(),
 	mode: z.enum(['observe', 'control']).default('observe'),
 	transport: z.enum(['cli', 'native']).default('cli'),
 	cols: z.coerce.number().int().min(10).max(1000).default(120),
@@ -157,8 +159,10 @@ export const consoleRoutes = new Hono<{ Variables: AuthVariables }>()
 			if (!q.success) return c.json({ error: 'invalid_query' }, 400);
 			const invalid = validateSessionName(q.data.session);
 			if (invalid) return c.json({ error: 'invalid_name', message: invalid }, 400);
-			if (!hasCapability(c.req.param('id'), `terminal:${q.data.transport}`)) {
-				return c.json({ error: 'unsupported', message: `This machine's runner doesn't support the ${q.data.transport} terminal. Update the runner.` }, 409);
+			if (q.data.view === 'pane' && !q.data.target) return c.json({ error: 'invalid_query', message: 'Which pane?' }, 400);
+			const capability = q.data.view === 'session' ? 'session' : q.data.transport;
+			if (!hasCapability(c.req.param('id'), `terminal:${capability}`)) {
+				return c.json({ error: 'unsupported', message: `This machine's runner doesn't support this terminal (${capability}). Update the runner.` }, 409);
 			}
 			await next();
 		},
@@ -169,7 +173,7 @@ export const consoleRoutes = new Hono<{ Variables: AuthVariables }>()
 			let channel: string | null = null;
 			return {
 				onOpen(_event, ws) {
-					channel = openTerminal(ws, { machineId, ...q, takeover: q.takeover === '1' });
+					channel = openTerminal(ws, { machineId, ...q, target: q.target ?? '', takeover: q.takeover === '1' });
 					if (!channel) {
 						ws.send(JSON.stringify({ type: 'closed', reason: 'The machine is offline.' }));
 						ws.close(1000, 'offline');
@@ -183,7 +187,7 @@ export const consoleRoutes = new Hono<{ Variables: AuthVariables }>()
 								machineId,
 								session: q.session,
 								method: 'terminal.control',
-								params: { target: q.target, transport: q.transport, takeover: q.takeover === '1' },
+								params: q.view === 'session' ? { view: 'session' } : { target: q.target, transport: q.transport, takeover: q.takeover === '1' },
 								outcome: 'ok'
 							})
 							.catch((e) => console.error('console: failed to write audit entry', e));

@@ -6,6 +6,9 @@
 //   Roamgate's client (src/vendor/roamgate): it focuses the pane in its own
 //   shell connection, crops the pane out of the tab surface and re-encodes it
 //   as ANSI. Watching still focuses the pane within its tab.
+// The "session" view instead runs Herdr's own client (`herdr --session <name>`)
+// in a PTY and streams its output: the whole session, exactly as if it were
+// opened in a terminal on the machine.
 import { dirname, join } from 'node:path';
 import {
 	RUNNER_MAX_MESSAGE_BYTES,
@@ -35,7 +38,8 @@ export class TerminalManager {
 	constructor(
 		private readonly send: Send,
 		private readonly sessionExists: (name: string) => boolean,
-		private readonly log: (msg: string) => void
+		private readonly log: (msg: string) => void,
+		private readonly sessionRunning: (name: string) => boolean = sessionExists
 	) {}
 
 	open(msg: Open) {
@@ -43,6 +47,12 @@ export class TerminalManager {
 		if (this.channels.has(msg.channel)) return fail('Channel already open.');
 		if (this.channels.size >= MAX_TERMINALS) return fail('Too many open terminals on this machine.');
 		if (!this.sessionExists(msg.session)) return fail(`No Herdr session named ${msg.session}.`);
+		if (msg.view === 'session') {
+			// Herdr's client would start a stopped session itself, outside the runner's lifecycle management.
+			if (!this.sessionRunning(msg.session)) return fail(`Session ${msg.session} is stopped. Start it first.`);
+			this.channels.set(msg.channel, this.openSession(msg));
+			return;
+		}
 		if (!TARGET.test(msg.target)) return fail('Invalid pane.');
 		this.channels.set(msg.channel, msg.transport === 'native' ? this.openNative(msg) : this.openCli(msg));
 	}
@@ -65,6 +75,70 @@ export class TerminalManager {
 
 	closeAll() {
 		for (const c of this.channels.values()) c.close();
+	}
+
+	private openSession(msg: Open): Channel {
+		const args = ['herdr'];
+		if (msg.session !== DEFAULT_SESSION) args.push('--session', msg.session);
+		// Drop Herdr's per-pane variables in case the runner itself runs inside a Herdr pane.
+		const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('HERDR_')));
+		let seq = 0;
+		let ended = false;
+		let pending: Uint8Array[] = [];
+		let size = { cols: msg.cols, rows: msg.rows };
+		let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+		// Output is batched per ~16 ms (one browser frame) to keep the message count down.
+		const flush = () => {
+			flushTimer = null;
+			if (ended || pending.length === 0) return;
+			const bytes = Buffer.concat(pending).toString('base64');
+			pending = [];
+			this.send({ type: 'term.frame', channel: msg.channel, frame: { seq: ++seq, full: false, width: size.cols, height: size.rows, bytes } });
+		};
+
+		const proc = Bun.spawn(args, {
+			env: { ...env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
+			terminal: {
+				cols: msg.cols,
+				rows: msg.rows,
+				data: (_terminal, data) => {
+					if (ended) return;
+					pending.push(new Uint8Array(data));
+					flushTimer ??= setTimeout(flush, 16);
+				}
+			}
+		});
+
+		void proc.exited.then((code) => {
+			flush();
+			if (ended) return;
+			ended = true;
+			this.channels.delete(msg.channel);
+			this.send({ type: 'term.closed', channel: msg.channel, reason: code === 0 ? 'Herdr closed.' : `Herdr exited (${code}).` });
+		});
+
+		return {
+			write: (line) => {
+				const m = line as { type: string; bytes?: string; cols?: number; rows?: number };
+				if (ended || !proc.terminal) return;
+				if (m.type === 'terminal.input' && msg.mode === 'control' && m.bytes) proc.terminal.write(Buffer.from(m.bytes, 'base64'));
+				else if (m.type === 'terminal.resize' && m.cols && m.rows) {
+					size = { cols: m.cols, rows: m.rows };
+					proc.terminal.resize(m.cols, m.rows);
+				}
+			},
+			close: () => {
+				if (ended) return;
+				ended = true;
+				if (flushTimer) clearTimeout(flushTimer);
+				this.channels.delete(msg.channel);
+				this.send({ type: 'term.closed', channel: msg.channel, reason: 'Closed.' });
+				// Only this client goes away; the session keeps running.
+				proc.kill('SIGTERM');
+				setTimeout(() => proc.kill('SIGKILL'), 2000);
+			}
+		};
 	}
 
 	private openNative(msg: Open): Channel {

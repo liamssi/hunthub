@@ -55,7 +55,7 @@ describe.skipIf(!herdrAvailable)('terminals', () => {
 					.map((m) => Buffer.from(m.frame.bytes, 'base64').toString())
 					.join('');
 
-			terminals.open({ type: 'term.open', channel, session: SESSION, target: pane, mode: 'control', transport, cols: 80, rows: 20, takeover: true });
+			terminals.open({ type: 'term.open', channel, session: SESSION, view: 'pane', target: pane, mode: 'control', transport, cols: 80, rows: 20, takeover: true });
 			await waitFor(() => screen().length > 0);
 			const marker = `${transport}-${Date.now() % 100000}`;
 			// Split so the marker only shows once the shell has run the command.
@@ -67,10 +67,30 @@ describe.skipIf(!herdrAvailable)('terminals', () => {
 		});
 	}
 
+	test('session view: streams the Herdr UI; closing it leaves the session running', async () => {
+		const sent: RunnerMessage[] = [];
+		const terminals = new TerminalManager((m) => void sent.push(m), (name) => name === SESSION, () => {}, (name) => name === SESSION);
+		const frames = () => sent.filter((m) => m.type === 'term.frame' && m.channel === 's');
+		terminals.open({ type: 'term.open', channel: 's', session: SESSION, view: 'session', target: '', mode: 'control', transport: 'cli', cols: 100, rows: 30, takeover: false });
+		await waitFor(() => frames().length > 0);
+		// Herdr draws its workspace list; the workspace made in beforeAll is in it.
+		await waitFor(() => frames().map((m) => Buffer.from((m as any).frame.bytes, 'base64').toString()).join('').includes('term'));
+		terminals.close('s');
+		await Bun.sleep(500);
+		expect(herdr('status', 'server').success).toBe(true);
+	});
+
+	test('session view refuses stopped sessions', () => {
+		const sent: RunnerMessage[] = [];
+		const terminals = new TerminalManager((m) => void sent.push(m), () => true, () => {}, () => false);
+		terminals.open({ type: 'term.open', channel: 'y', session: SESSION, view: 'session', target: '', mode: 'observe', transport: 'cli', cols: 80, rows: 20, takeover: false });
+		expect(sent[0]).toMatchObject({ type: 'term.closed', channel: 'y' });
+	});
+
 	test('refuses unknown sessions and bad targets', () => {
 		const sent: RunnerMessage[] = [];
 		const terminals = new TerminalManager((m) => void sent.push(m), () => false, () => {});
-		terminals.open({ type: 'term.open', channel: 'x', session: 'nope', target: 'w1:p1', mode: 'observe', transport: 'cli', cols: 80, rows: 20, takeover: false });
+		terminals.open({ type: 'term.open', channel: 'x', session: 'nope', view: 'pane', target: 'w1:p1', mode: 'observe', transport: 'cli', cols: 80, rows: 20, takeover: false });
 		expect(sent[0]).toMatchObject({ type: 'term.closed', channel: 'x' });
 	});
 });

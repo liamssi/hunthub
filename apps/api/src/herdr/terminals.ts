@@ -15,6 +15,7 @@ const MAX_BROWSER_BUFFER = 8 * 1024 * 1024;
 type OpenOptions = {
 	machineId: string;
 	session: string;
+	view: 'pane' | 'session';
 	target: string;
 	mode: 'observe' | 'control';
 	transport: 'cli' | 'native';
@@ -30,6 +31,7 @@ export function openTerminal(browser: WSContext, opts: OpenOptions): string | nu
 		type: 'term.open',
 		channel: id,
 		session: opts.session,
+		view: opts.view,
 		target: opts.target,
 		mode: opts.mode,
 		transport: opts.transport,

@@ -87,6 +87,10 @@ class SessionWatcher {
 	private lastSent = '';
 	private state: HerdrSessionReport['state'] | null = null;
 
+	get running(): boolean {
+		return this.state === 'running';
+	}
+
 	constructor(
 		readonly name: string,
 		private readonly send: Send,
@@ -275,6 +279,10 @@ export class HerdrGateway {
 	/** Whether a session exists on disk (checked before touching its sockets). */
 	hasSession(name: string): boolean {
 		return this.watchers.has(name);
+	}
+
+	isRunning(name: string): boolean {
+		return this.watchers.get(name)?.running ?? false;
 	}
 
 	/** Runs an allowlisted call for the hub and replies with the result. */

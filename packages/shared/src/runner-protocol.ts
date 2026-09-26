@@ -124,6 +124,8 @@ export const serverMessageSchema = z.discriminatedUnion('type', [
 		type: z.literal('term.open'),
 		channel: z.string().max(64),
 		session: z.string().max(128),
+		/** "pane": one pane (target) through a transport; "session": the whole Herdr UI, as if opened in a terminal. */
+		view: z.enum(['pane', 'session']).default('pane'),
 		target: z.string().max(128),
 		mode: z.enum(['observe', 'control']),
 		transport: z.enum(terminalTransports),

@@ -405,7 +405,7 @@ describe('live terminals', () => {
 		await waitFor(() => b.messages.length === 1);
 		expect(b.messages[0]).toMatchObject({ type: 'frame', bytes: btoa('hello') });
 		const open = r.received.find((m) => m.type === 'term.open');
-		expect(open).toMatchObject({ session: 'acme-1', target: 'w1:p1', mode: 'control', transport: 'cli', cols: 100, rows: 30, takeover: false });
+		expect(open).toMatchObject({ session: 'acme-1', view: 'pane', target: 'w1:p1', mode: 'control', transport: 'cli', cols: 100, rows: 30, takeover: false });
 
 		b.ws.send(JSON.stringify({ type: 'input', bytes: btoa('ls\r') }));
 		await waitFor(() => b.messages.length === 2);
@@ -448,6 +448,8 @@ describe('live terminals', () => {
 		expect((await api(url('target=w1:p1'), { headers: { origin: 'https://evil.example' } })).status).toBe(403);
 		expect((await api(url('target=w1:p1'))).status).toBe(409);
 		expect((await api(url('target=$(id)'))).status).toBe(400);
+		expect((await api(url('view=session'))).status).toBe(409);
+		expect((await api(`/machines/${r.machineId}/terminal?session=acme-1`)).status).toBe(400);
 		expect(r.received.some((m) => m.type === 'term.open')).toBe(false);
 		r.close();
 	});

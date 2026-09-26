@@ -1,19 +1,21 @@
 <script lang="ts" module>
 	export type TerminalMode = 'observe' | 'control';
 	export type TerminalTransport = 'cli' | 'native';
+	export type TerminalViewKind = 'pane' | 'session';
 	export type TerminalState = { phase: 'connecting' | 'live' | 'closed'; reason?: string };
 </script>
 
 <script lang="ts">
-	// One live pane, streamed through the hub from the machine's runner.
-	// Frames are ANSI screen updates written to xterm.js as they arrive.
+	// One live pane, or a whole session (Herdr's own UI), streamed through the
+	// hub from the machine's runner. Frames are ANSI written to xterm.js as they arrive.
 	import '@xterm/xterm/css/xterm.css';
 	import type { Terminal } from '@xterm/xterm';
 
 	let {
 		machineId,
 		session,
-		target,
+		view = 'pane',
+		target = '',
 		mode,
 		transport,
 		takeover = false,
@@ -21,7 +23,8 @@
 	}: {
 		machineId: string;
 		session: string;
-		target: string;
+		view?: TerminalViewKind;
+		target?: string;
 		mode: TerminalMode;
 		transport: TerminalTransport;
 		takeover?: boolean;
@@ -73,11 +76,13 @@
 			const send = (msg: object) => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
 			const params = new URLSearchParams({
 				session,
-				target,
+				view,
+				...(view === 'pane' && { target }),
 				mode,
 				transport,
-				cols: String(term.cols),
-				rows: String(term.rows),
+				// Tiny containers still get a usable size (the hub's minimum is 10x4).
+				cols: String(Math.max(term.cols, 10)),
+				rows: String(Math.max(term.rows, 4)),
 				takeover: takeover ? '1' : '0'
 			});
 			const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -113,10 +118,13 @@
 				term.onData((data) => sendInput(encoder.encode(data)));
 				term.onBinary((data) => sendInput(Uint8Array.from(data, (c) => c.charCodeAt(0) & 0xff)));
 				// The pane keeps its own scrollback; the wheel scrolls it on the machine.
-				term.attachCustomWheelEventHandler((e) => {
-					if (e.deltaY) send({ type: 'scroll', direction: e.deltaY < 0 ? 'up' : 'down', lines: 3 });
-					return false;
-				});
+				// Herdr's own UI takes the wheel as mouse input instead.
+				if (view === 'pane') {
+					term.attachCustomWheelEventHandler((e) => {
+						if (e.deltaY) send({ type: 'scroll', direction: e.deltaY < 0 ? 'up' : 'down', lines: 3 });
+						return false;
+					});
+				}
 				term.focus();
 			}
 
@@ -126,7 +134,7 @@
 					if (!term) return;
 					const { cols, rows } = term;
 					fit.fit();
-					if (term.cols !== cols || term.rows !== rows) send({ type: 'resize', cols: term.cols, rows: term.rows });
+					if (term.cols !== cols || term.rows !== rows) send({ type: 'resize', cols: Math.max(term.cols, 10), rows: Math.max(term.rows, 4) });
 				}, 100);
 			});
 			observer.observe(container);

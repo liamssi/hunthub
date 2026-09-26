@@ -98,3 +98,7 @@ Both transports are behind the same `term.*` channel protocol and are chosen per
 | Version coupling | None (same binary) | Frozen protocol, Herdr >= 0.9.0 |
 
 The hub checks the runner's `terminal:cli` / `terminal:native` capability, refuses other origins (cookies travel on cross-site WebSocket upgrades), never forwards keystrokes from a watching terminal, and audits each control session (`terminal.control`).
+
+### Whole-session view
+
+"Open session" on a session page shows the whole session in Herdr's own UI (tabs, splits, keybindings), as if it were opened in a terminal on the machine. The runner runs `herdr --session <name>` in a PTY (Bun's built-in `terminal` spawn option) and streams its output through the same `term.*` channels (`view: 'session'`, capability `terminal:session`). Closing it only ends that client; the session keeps running. Stopped sessions are refused so Herdr's client can't start a server outside the runner's lifecycle management. A Roamgate-style web layout (our own tab navigation, one terminal per pane) comes later for comparison.
