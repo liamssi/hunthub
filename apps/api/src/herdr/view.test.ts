@@ -10,6 +10,9 @@ test('interprets a real Herdr snapshot', () => {
 	expect(view.workspaces).toHaveLength(1);
 	const ws = view.workspaces[0]!;
 	expect(ws).toMatchObject({ id: 'w1', label: 'demo-ws', status: 'working', paneCount: 1 });
+	expect(ws.tabs).toEqual([
+		{ id: 'w1:t1', label: '1', panes: [{ id: 'w1:p1', cwd: '/tmp', agent: { name: 'test-bot', status: 'working' } }] }
+	]);
 	expect(ws.agents).toEqual([
 		{
 			machineId: 'm1',

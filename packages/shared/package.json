@@ -6,7 +6,8 @@
 	"exports": {
 		"./permissions": "./src/permissions.ts",
 		"./runner-protocol": "./src/runner-protocol.ts",
-		"./machines": "./src/machines.ts"
+		"./machines": "./src/machines.ts",
+		"./console": "./src/console.ts"
 	},
 	"peerDependencies": {
 		"better-auth": "*"

@@ -3,7 +3,7 @@
 // unknown fields are ignored and missing optional ones tolerated, so newer
 // Herdr versions keep working.
 import { z } from 'zod';
-import type { AgentStatus, AgentView, SessionView, WorkspaceView } from '@hunthub/shared/machines';
+import type { AgentStatus, AgentView, PaneView, SessionView, TabView, WorkspaceView } from '@hunthub/shared/machines';
 
 const statusSchema = z
 	.string()
@@ -18,6 +18,20 @@ const snapshotSchema = z.object({
 				number: z.number().optional(),
 				agent_status: statusSchema.optional(),
 				pane_count: z.number().optional()
+			})
+		)
+		.default([]),
+	tabs: z
+		.array(z.object({ tab_id: z.string(), workspace_id: z.string(), label: z.string().optional(), number: z.number().optional() }))
+		.default([]),
+	panes: z
+		.array(
+			z.object({
+				pane_id: z.string(),
+				tab_id: z.string(),
+				workspace_id: z.string(),
+				cwd: z.string().optional(),
+				foreground_cwd: z.string().optional()
 			})
 		)
 		.default([]),
@@ -52,9 +66,25 @@ export function sessionView(
 		label: w.label || `Workspace ${w.number ?? w.workspace_id}`,
 		status: w.agent_status ?? 'unknown',
 		paneCount: w.pane_count ?? 0,
+		tabs: [],
 		agents: []
 	}));
 	const byId = new Map(workspaces.map((w) => [w.id, w]));
+
+	const tabsById = new Map<string, TabView>();
+	for (const t of parsed.data.tabs) {
+		const workspace = byId.get(t.workspace_id);
+		if (!workspace) continue;
+		const tab: TabView = { id: t.tab_id, label: t.label || String(t.number ?? t.tab_id), panes: [] };
+		workspace.tabs.push(tab);
+		tabsById.set(tab.id, tab);
+	}
+	const panesById = new Map<string, PaneView>();
+	for (const p of parsed.data.panes) {
+		const pane: PaneView = { id: p.pane_id, cwd: p.foreground_cwd || p.cwd || null, agent: null };
+		tabsById.get(p.tab_id)?.panes.push(pane);
+		panesById.set(pane.id, pane);
+	}
 
 	for (const a of parsed.data.agents) {
 		const workspace = byId.get(a.workspace_id);
@@ -72,6 +102,8 @@ export function sessionView(
 			origin: 'external'
 		};
 		workspace.agents.push(agent);
+		const pane = panesById.get(a.pane_id);
+		if (pane) pane.agent = { name: agent.name, status: agent.status };
 	}
 	return { name: session.name, state: session.state, workspaces };
 }

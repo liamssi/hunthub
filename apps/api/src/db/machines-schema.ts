@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+	bigint,
 	check,
 	doublePrecision,
 	index,
@@ -99,4 +100,28 @@ export const appSetting = pgTable(
 		updatedAt: updatedAt()
 	},
 	(t) => [index('app_setting_updated_by_idx').on(t.updatedBy)]
+);
+
+/** Every change made through the Herdr console: who, where, what, and the outcome. */
+export const consoleAudit = pgTable(
+	'console_audit',
+	{
+		id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+		userId: text('user_id').references(() => user.id, { onDelete: 'set null' }),
+		machineId: uuid('machine_id').references(() => machine.id, { onDelete: 'set null' }),
+		session: text('session').notNull(),
+		method: text('method').notNull(),
+		/** Call parameters; secret-looking values are redacted before storing. */
+		params: jsonb('params').$type<Record<string, unknown>>().notNull(),
+		/** ok | error | uncertain (the machine didn't confirm in time). */
+		outcome: text('outcome').notNull(),
+		error: text('error'),
+		createdAt: createdAt()
+	},
+	(t) => [
+		check('console_audit_outcome_check', sql`${t.outcome} in ('ok', 'error', 'uncertain')`),
+		index('console_audit_machine_created_idx').on(t.machineId, t.createdAt),
+		index('console_audit_user_idx').on(t.userId),
+		index('console_audit_created_idx').on(t.createdAt)
+	]
 );

@@ -6,7 +6,8 @@ import { dirname } from 'node:path';
 import type { RunnerMessage } from '@hunthub/shared/runner-protocol';
 import { socketPathFor } from './client';
 import { HerdrGateway, SESSION_DELETE, SESSION_START, SESSION_STOP } from './gateway';
-import { isRunning, validateSessionName } from './sessions';
+import { validateSessionName } from '@hunthub/shared/console';
+import { isRunning } from './sessions';
 
 const herdrAvailable = Bun.spawnSync(['herdr', '--version']).success;
 const MANAGED = 'hunthub-lc-managed';

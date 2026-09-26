@@ -7,52 +7,18 @@ import { type FSWatcher, watch } from 'node:fs';
 import { join } from 'node:path';
 import type { HerdrSessionReport, RunnerMessage } from '@hunthub/shared/runner-protocol';
 import { discoverSessions, HerdrError, herdrDir, request, socketPathFor, subscribe } from './client';
-import { deleteSession, startSession, stopSession, validateSessionName } from './sessions';
+import {
+	CONSOLE_METHODS,
+	CREATE_METHODS,
+	MUTATING_METHODS,
+	SESSION_DELETE,
+	SESSION_START,
+	SESSION_STOP,
+	validateSessionName
+} from '@hunthub/shared/console';
+import { deleteSession, startSession, stopSession } from './sessions';
 
-/** Herdr methods that only read. */
-const READ_METHODS = [
-	'ping',
-	'session.snapshot',
-	'workspace.list',
-	'tab.list',
-	'pane.list',
-	'pane.get',
-	'pane.read',
-	'agent.list',
-	'agent.get',
-	'agent.read',
-	'agent.explain',
-	'worktree.list'
-];
-
-/** Herdr methods that change a session's layout (the console, M3a). */
-const MANAGE_METHODS = [
-	'workspace.create',
-	'workspace.rename',
-	'workspace.close',
-	'tab.create',
-	'tab.rename',
-	'tab.close',
-	'pane.split',
-	'pane.rename',
-	'pane.close',
-	'worktree.create',
-	'worktree.open',
-	'worktree.remove'
-];
-
-/** Session lifecycle, done by the runner itself (not Herdr socket calls). */
-export const SESSION_START = 'hunthub.session.start';
-export const SESSION_STOP = 'hunthub.session.stop';
-export const SESSION_DELETE = 'hunthub.session.delete';
-const LIFECYCLE_METHODS = [SESSION_START, SESSION_STOP, SESSION_DELETE];
-
-/** Everything the hub may ask for. For now all users may do everything; tiers come later. */
-export const ALLOWED_METHODS = new Set([...READ_METHODS, ...MANAGE_METHODS, ...LIFECYCLE_METHODS]);
-const MUTATING = new Set([...MANAGE_METHODS, ...LIFECYCLE_METHODS]);
-
-/** Creating things never steals focus from whoever is using the session locally. */
-const CREATE_METHODS = new Set(['workspace.create', 'tab.create', 'pane.split', 'worktree.create', 'worktree.open']);
+export { SESSION_DELETE, SESSION_START, SESSION_STOP } from '@hunthub/shared/console';
 
 // Structure changes arrive as events; agent state changes don't, so snapshots
 // are also checked on a short timer.
@@ -311,7 +277,7 @@ export class HerdrGateway {
 		const reply = (ok: boolean, body: { result?: unknown; error?: { code: string; message: string } }) =>
 			this.send({ type: 'herdr.result', id, ok, ...body });
 
-		if (!ALLOWED_METHODS.has(method)) {
+		if (!CONSOLE_METHODS.has(method)) {
 			return reply(false, { error: { code: 'not_allowed', message: `${method} is not allowed on this machine` } });
 		}
 		// The session name becomes part of a socket path. Starting may name a new
@@ -324,7 +290,7 @@ export class HerdrGateway {
 
 		const run = () => this.execute(session, method, params);
 		try {
-			const result = MUTATING.has(method) ? await this.enqueue(session, run) : await run();
+			const result = MUTATING_METHODS.has(method) ? await this.enqueue(session, run) : await run();
 			reply(true, { result });
 		} catch (err) {
 			const error =

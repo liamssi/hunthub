@@ -7,20 +7,12 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { validateSessionName } from '@hunthub/shared/console';
 import { DEFAULT_SESSION, HerdrError, request, socketPathFor } from './client';
 
 const UNIT_TEMPLATE = 'hunthub-herdr@.service';
 const unitName = (session: string) => `hunthub-herdr@${session}.service`;
 const unitDir = () => join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'systemd', 'user');
-
-/** Herdr's session name rules: ASCII letters, digits, '.', '_' and '-', at most 64 bytes. */
-export function validateSessionName(name: string): string | null {
-	if (!name) return 'Session name cannot be empty.';
-	if (name.length > 64) return 'Session name cannot be longer than 64 characters.';
-	if (name === '.' || name === '..') return 'Session name cannot be . or ..';
-	if (!/^[A-Za-z0-9._-]+$/.test(name)) return "Session name may only contain letters, numbers, '.', '_' and '-'.";
-	return null;
-}
 
 function run(cmd: string[], timeoutMs = 15_000) {
 	const result = Bun.spawnSync(cmd, { stdout: 'pipe', stderr: 'pipe', timeout: timeoutMs });

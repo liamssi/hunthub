@@ -42,11 +42,25 @@ export type AgentView = {
 	origin: 'external';
 };
 
+export type PaneView = {
+	id: string;
+	cwd: string | null;
+	/** The agent running in this pane, if Herdr recognises one. */
+	agent: { name: string; status: AgentStatus } | null;
+};
+
+export type TabView = {
+	id: string;
+	label: string;
+	panes: PaneView[];
+};
+
 export type WorkspaceView = {
 	id: string;
 	label: string;
 	status: AgentStatus;
 	paneCount: number;
+	tabs: TabView[];
 	agents: AgentView[];
 };
 

@@ -7,7 +7,7 @@ import { RUNNER_CLOSE, RUNNER_PROTOCOL_VERSION } from '@hunthub/shared/runner-pr
 import { app } from '../app';
 import { auth } from '../auth';
 import { db } from '../db';
-import { machine, machineJoinToken, user } from '../db/schema';
+import { consoleAudit, machine, machineJoinToken, user } from '../db/schema';
 import { connectionSettings, setConnectionSettingsInMemory } from './connection-settings';
 import { startOfflineSweep, stopOfflineSweep } from './registry';
 
@@ -47,7 +47,10 @@ afterAll(async () => {
 	stopOfflineSweep();
 	setConnectionSettingsInMemory(savedSettings);
 	const ids = createdMachines.filter(Boolean);
-	if (ids.length) await db.delete(machine).where(inArray(machine.id, ids));
+	if (ids.length) {
+		await db.delete(consoleAudit).where(inArray(consoleAudit.machineId, ids));
+		await db.delete(machine).where(inArray(machine.id, ids));
+	}
 	await db.delete(user).where(eq(user.email, email));
 	server.stop(true);
 });
@@ -283,6 +286,83 @@ describe('herdr reports', () => {
 		const { machineId } = await enrolledMachine();
 		const res = await api(`/machines/${machineId}/sessions/main/panes/w1:p1/output`);
 		expect(res.status).toBe(409);
+	});
+});
+
+describe('herdr console', () => {
+	/** A fake runner that answers every herdr.call with a canned result. */
+	async function answeringRunner(answer: (msg: any) => { ok: boolean; result?: unknown; error?: { code: string; message: string } }) {
+		const { credential, machineId } = await enrolledMachine();
+		const ws = new WebSocket(`${base.replace('http', 'ws')}/api/runner/ws`, { headers: { authorization: `Bearer ${credential}` } });
+		const calls: any[] = [];
+		await new Promise<void>((resolve) => {
+			ws.onopen = () =>
+				ws.send(JSON.stringify({ type: 'hello', protocol: RUNNER_PROTOCOL_VERSION, runnerVersion: 'test', capabilities: ['herdr'], host }));
+			ws.onmessage = (e) => {
+				const msg = JSON.parse(String(e.data));
+				if (msg.type === 'welcome') return resolve();
+				if (msg.type !== 'herdr.call') return;
+				calls.push(msg);
+				ws.send(JSON.stringify({ type: 'herdr.result', id: msg.id, ...answer(msg) }));
+			};
+		});
+		return { machineId, calls, close: () => ws.close() };
+	}
+
+	const auditFor = (machineId: string) => db.select().from(consoleAudit).where(eq(consoleAudit.machineId, machineId));
+
+	test('starting a session goes to the runner and is audited', async () => {
+		const r = await answeringRunner(() => ({ ok: true, result: { via: 'systemd' } }));
+		const res = await api(`/machines/${r.machineId}/sessions`, { method: 'POST', body: JSON.stringify({ name: 'acme-1' }) });
+		expect(res.status).toBe(200);
+		expect(r.calls[0]).toMatchObject({ session: 'acme-1', method: 'hunthub.session.start' });
+		const audit = await auditFor(r.machineId);
+		expect(audit).toHaveLength(1);
+		expect(audit[0]).toMatchObject({ session: 'acme-1', method: 'hunthub.session.start', outcome: 'ok' });
+		r.close();
+	});
+
+	test('layout calls are forwarded; secrets are redacted in the audit log', async () => {
+		const r = await answeringRunner(() => ({ ok: true, result: { type: 'workspace_created' } }));
+		const res = await api(`/machines/${r.machineId}/sessions/acme-1/call`, {
+			method: 'POST',
+			body: JSON.stringify({ method: 'workspace.create', params: { cwd: '/srv', label: 'x', env: { API_TOKEN: 's3cret' } } })
+		});
+		expect(res.status).toBe(200);
+		const [row] = await auditFor(r.machineId);
+		expect(row!.params).toEqual({ cwd: '/srv', label: 'x', env: '[redacted]' });
+		expect(JSON.stringify(row!.params)).not.toContain('s3cret');
+		r.close();
+	});
+
+	test('runner errors come back with their code and are audited as errors', async () => {
+		const r = await answeringRunner(() => ({ ok: false, error: { code: 'running', message: 'Session acme-1 is running; stop it first.' } }));
+		const res = await api(`/machines/${r.machineId}/sessions/acme-1`, { method: 'DELETE' });
+		expect(res.status).toBe(400);
+		expect(await res.json()).toMatchObject({ error: 'running' });
+		expect((await auditFor(r.machineId))[0]).toMatchObject({ outcome: 'error' });
+		r.close();
+	});
+
+	test('actions outside the console list and bad names are refused before reaching the machine', async () => {
+		const r = await answeringRunner(() => ({ ok: true }));
+		const notAllowed = await api(`/machines/${r.machineId}/sessions/acme-1/call`, {
+			method: 'POST',
+			body: JSON.stringify({ method: 'server.stop', params: {} })
+		});
+		expect(notAllowed.status).toBe(400);
+		const badName = await api(`/machines/${r.machineId}/sessions`, { method: 'POST', body: JSON.stringify({ name: '../etc' }) });
+		expect(badName.status).toBe(400);
+		expect(r.calls).toHaveLength(0);
+		r.close();
+	});
+
+	test('reads are not audited', async () => {
+		const r = await answeringRunner(() => ({ ok: true, result: { agents: [] } }));
+		const res = await api(`/machines/${r.machineId}/sessions/acme-1/call`, { method: 'POST', body: JSON.stringify({ method: 'agent.list' }) });
+		expect(res.status).toBe(200);
+		expect(await auditFor(r.machineId)).toHaveLength(0);
+		r.close();
 	});
 });
 
