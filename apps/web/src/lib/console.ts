@@ -58,3 +58,7 @@ export const consoleCall = (
 /** Like `consoleCall`, but also returns Herdr's result (e.g. the pane a split created). */
 export const consoleRequest = (machineId: string, session: string, label: string, method: string, params: Record<string, unknown>) =>
 	runWithResult(label, `${sessionUrl(machineId, session)}/call`, { method: 'POST', body: JSON.stringify({ method, params }) });
+
+/** A read-only call that reports its outcome without toasts (the caller shows errors in place). */
+export const consoleQuery = (machineId: string, session: string, method: string, params: Record<string, unknown>) =>
+	send(`${sessionUrl(machineId, session)}/call`, { method: 'POST', body: JSON.stringify({ method, params }) });

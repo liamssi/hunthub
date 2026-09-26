@@ -41,10 +41,19 @@ export const SESSION_STOP = 'hunthub.session.stop';
 export const SESSION_DELETE = 'hunthub.session.delete';
 export const LIFECYCLE_METHODS = [SESSION_START, SESSION_STOP, SESSION_DELETE] as const;
 
-export type ConsoleMethod = (typeof READ_METHODS)[number] | (typeof MANAGE_METHODS)[number] | (typeof LIFECYCLE_METHODS)[number];
+/**
+ * Read-only file browsing, done by the runner itself within the session's
+ * project folders (see the runner's herdr/files.ts).
+ */
+export const FS_ROOTS = 'hunthub.fs.roots';
+export const FS_LIST = 'hunthub.fs.list';
+export const FS_READ = 'hunthub.fs.read';
+export const FILE_METHODS = [FS_ROOTS, FS_LIST, FS_READ] as const;
+
+export type ConsoleMethod = (typeof READ_METHODS)[number] | (typeof MANAGE_METHODS)[number] | (typeof LIFECYCLE_METHODS)[number] | (typeof FILE_METHODS)[number];
 
 /** Everything the console may do. For now every user may do everything; tiers come later. */
-export const CONSOLE_METHODS: ReadonlySet<string> = new Set([...READ_METHODS, ...MANAGE_METHODS, ...LIFECYCLE_METHODS]);
+export const CONSOLE_METHODS: ReadonlySet<string> = new Set([...READ_METHODS, ...MANAGE_METHODS, ...LIFECYCLE_METHODS, ...FILE_METHODS]);
 
 /** Methods that change something; these are serialized per session and audited. */
 export const MUTATING_METHODS: ReadonlySet<string> = new Set([...MANAGE_METHODS, ...LIFECYCLE_METHODS]);

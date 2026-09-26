@@ -9,6 +9,7 @@
 	import { tick, untrack } from 'svelte';
 	import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
 	import BellRingIcon from '@lucide/svelte/icons/bell-ring';
+	import FolderTreeIcon from '@lucide/svelte/icons/folder-tree';
 	import HistoryIcon from '@lucide/svelte/icons/history';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import { toast } from 'svelte-sonner';
@@ -47,6 +48,8 @@
 	import { consoleCall, consoleRequest } from '$lib/console';
 	import { appearance, themeColors, workspaceVars } from '$lib/terminal-appearance.svelte';
 	import { cn } from '$lib/utils.js';
+	import FileExplorer, { type OpenFile } from './file-explorer.svelte';
+	import FileViewer from './file-viewer.svelte';
 	import HistoryPanel from './history-panel.svelte';
 	import TerminalView, { type TerminalMode, type TerminalState, type TerminalTransport } from './terminal-view.svelte';
 
@@ -406,6 +409,7 @@
 				{ label: 'Split right', icon: SquareSplitHorizontalIcon, shortcut: keys('\\'), run: () => void splitPane(t.id, paneId, 'right') },
 				{ label: 'Split down', icon: SquareSplitVerticalIcon, shortcut: keys('-'), run: () => void splitPane(t.id, paneId, 'down') },
 				{ label: 'Show history', icon: HistoryIcon, shortcut: keys('H'), run: () => (historyOpen[paneId] = true) },
+				{ label: 'Browse files here', icon: FolderTreeIcon, run: () => browseHere(paneId) },
 				{
 					label: 'Search in history',
 					icon: SearchIcon,
@@ -443,6 +447,70 @@
 				{ label: 'Close space', icon: XIcon, destructive: true, run: () => closeSpace(w) }
 			]
 		];
+	}
+
+	// --- Files: a read-only explorer on the right, files open over the panes ----
+	const FILES_KEY = 'hunthub.workspace.files';
+	const FILES_WIDTH_KEY = 'hunthub.workspace.filesWidth';
+	let filesOpen = $state(false);
+	let filesWidth = $state(300);
+	const clampFilesWidth = (w: number) => Math.min(640, Math.max(220, Math.round(w)));
+	$effect(() => {
+		try {
+			filesOpen = localStorage.getItem(FILES_KEY) === 'open';
+			filesWidth = clampFilesWidth(Number(localStorage.getItem(FILES_WIDTH_KEY)) || 300);
+		} catch {
+			// Only a convenience.
+		}
+	});
+	function setFilesOpen(open: boolean) {
+		filesOpen = open;
+		remember(FILES_KEY, open ? 'open' : 'closed');
+	}
+	let openFile = $state<OpenFile | null>(null);
+	/** A folder asked for explicitly ("Browse files here"); otherwise the explorer follows the space. */
+	let browseRoot = $state<string | null>(null);
+	const preferredRoot = $derived.by(() => {
+		if (browseRoot) return browseRoot;
+		if (space?.worktree) return space.worktree.checkoutPath;
+		const paneId = tab ? activePane[tab.id] : undefined;
+		const pane = tab?.panes.find((p) => p.id === paneId) ?? space?.tabs[0]?.panes[0];
+		return pane?.cwd ?? null;
+	});
+	// Moving to another space follows it again.
+	$effect(() => {
+		void space?.id;
+		browseRoot = null;
+	});
+	function browseHere(paneId: string) {
+		const cwd = tabs.flatMap((t) => t.panes).find((p) => p.id === paneId)?.cwd;
+		browseRoot = cwd ?? null;
+		setFilesOpen(true);
+	}
+	async function terminalIn(path: string) {
+		if (!space) return;
+		const out = await consoleRequest(machineId, session.name, 'Open terminal', 'tab.create', { workspace_id: space.id, cwd: path });
+		const created = out.ok ? (out.result as { tab?: { tab_id?: string } } | null)?.tab?.tab_id : undefined;
+		if (created) {
+			openFile = null;
+			selectTab(space.id, created);
+		}
+	}
+	function startFilesResize(e: PointerEvent) {
+		const el = e.currentTarget as HTMLElement;
+		el.setPointerCapture(e.pointerId);
+		const startX = e.clientX;
+		const startWidth = filesWidth;
+		const move = (ev: PointerEvent) => (filesWidth = clampFilesWidth(startWidth - (ev.clientX - startX)));
+		const end = () => {
+			el.removeEventListener('pointermove', move);
+			el.removeEventListener('pointerup', end);
+			el.removeEventListener('pointercancel', end);
+			remember(FILES_WIDTH_KEY, String(filesWidth));
+		};
+		el.addEventListener('pointermove', move);
+		el.addEventListener('pointerup', end);
+		el.addEventListener('pointercancel', end);
 	}
 
 	// --- Attention: agents that need you, or finished --------------------------
@@ -559,6 +627,7 @@
 		else if (code === 'KeyT') void newTab(w.id);
 		else if (code === 'KeyN') newSpace();
 		else if (code === 'KeyJ') nextAttention();
+		else if (code === 'KeyE') setFilesOpen(!filesOpen);
 		else if (code === 'BracketLeft' || code === 'BracketRight') {
 			const next = w.tabs[(tabIndex + (code === 'BracketRight' ? 1 : -1) + w.tabs.length) % w.tabs.length];
 			if (next) selectTab(w.id, next.id);
@@ -580,6 +649,7 @@
 		['Maximize or restore pane', 'Z'],
 		['Close pane', 'X'],
 		['Show or hide history', 'H'],
+		['Show or hide files', 'E'],
 		['Search in history', 'F'],
 		['New tab', 'T'],
 		['Previous / next tab', '[ ]'],
@@ -915,12 +985,39 @@
 					</div>
 				{/if}
 			</div>
-			{#if controls}
-				<div class="ms-auto flex shrink-0 items-center gap-1">{@render controls()}</div>
-			{/if}
+			<div class="ms-auto flex shrink-0 items-center gap-1">
+				<Button
+					size="sm"
+					variant={filesOpen ? 'secondary' : 'ghost'}
+					class="h-7 px-2"
+					aria-pressed={filesOpen}
+					title="Files ({keys('E')})"
+					onclick={() => setFilesOpen(!filesOpen)}
+				>
+					<FolderTreeIcon data-icon="inline-start" />Files
+				</Button>
+				{#if controls}{@render controls()}{/if}
+			</div>
 		</div>
 
-		<div class="relative min-h-0 flex-1 bg-(--workspace-stage,var(--sidebar))">
+		<div class="flex min-h-0 flex-1">
+		<div class="relative min-h-0 min-w-0 flex-1 bg-(--workspace-stage,var(--sidebar))">
+			{#if openFile}
+				<!-- Files open over the panes; the terminals stay connected underneath. -->
+				<div class="absolute inset-1.5 z-20">
+					<FileViewer
+						{machineId}
+						session={session.name}
+						root={openFile.root}
+						path={openFile.path}
+						onclose={() => {
+							openFile = null;
+							const paneId = tab ? activePane[tab.id] : undefined;
+							if (tab && paneId) void focusPane(tab.id, paneId);
+						}}
+					/>
+				</div>
+			{/if}
 			{#each alive as t (t.id)}
 				{@const current = t.id === tab?.id}
 				{@const max = maximized[t.id] ?? null}
@@ -1106,6 +1203,33 @@
 			{:else}
 				<p class="p-4 text-sm text-muted-foreground">This space has no tabs yet.</p>
 			{/each}
+		</div>
+		{#if filesOpen}
+			<aside class="relative shrink-0 border-s" style:width="{filesWidth}px" aria-label="Files">
+				<!-- Drag the edge to resize; double-click resets. -->
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div
+					class="group/edge absolute inset-y-0 -start-1 z-20 flex w-2 cursor-col-resize justify-center"
+					title="Drag to resize, double-click to reset"
+					onpointerdown={startFilesResize}
+					ondblclick={() => {
+						filesWidth = 300;
+						remember(FILES_WIDTH_KEY, '300');
+					}}
+				>
+					<span class="h-full w-px bg-foreground/40 opacity-0 transition-opacity group-hover/edge:opacity-100"></span>
+				</div>
+				<FileExplorer
+					{machineId}
+					session={session.name}
+					{preferredRoot}
+					selected={openFile}
+					onopen={(f) => (openFile = f)}
+					onterminal={terminalIn}
+					onclose={() => setFilesOpen(false)}
+				/>
+			</aside>
+		{/if}
 		</div>
 	</div>
 </div>

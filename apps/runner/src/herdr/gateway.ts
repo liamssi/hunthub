@@ -11,11 +11,15 @@ import {
 	CONSOLE_METHODS,
 	CREATE_METHODS,
 	MUTATING_METHODS,
+	FS_LIST,
+	FS_READ,
+	FS_ROOTS,
 	SESSION_DELETE,
 	SESSION_START,
 	SESSION_STOP,
 	validateSessionName
 } from '@hunthub/shared/console';
+import { FsError, listFolder, readFile, rootsFromSnapshot } from './files';
 import { deleteSession, startSession, stopSession } from './sessions';
 
 export { SESSION_DELETE, SESSION_START, SESSION_STOP } from '@hunthub/shared/console';
@@ -106,6 +110,8 @@ class SessionWatcher {
 	private retry: ReturnType<typeof setTimeout> | null = null;
 	private lastSent = '';
 	private state: HerdrSessionReport['state'] | null = null;
+	/** The latest snapshot (for the file explorer's allowed folders). */
+	snapshot: unknown = null;
 
 	get running(): boolean {
 		return this.state === 'running';
@@ -145,6 +151,7 @@ class SessionWatcher {
 	}
 
 	private report(state: HerdrSessionReport['state'], snapshot: unknown | null, meaningful = '') {
+		this.snapshot = snapshot;
 		if (state === this.state && meaningful === this.lastSent) return;
 		this.state = state;
 		this.lastSent = meaningful;
@@ -327,7 +334,7 @@ export class HerdrGateway {
 			reply(true, { result });
 		} catch (err) {
 			const error =
-				err instanceof HerdrError
+				err instanceof HerdrError || err instanceof FsError
 					? { code: err.code, message: err.message }
 					: { code: 'unavailable', message: err instanceof Error ? err.message : String(err) };
 			reply(false, { error });
@@ -348,6 +355,12 @@ export class HerdrGateway {
 
 	private async execute(session: string, method: string, params: Record<string, unknown>): Promise<unknown> {
 		switch (method) {
+			case FS_ROOTS:
+				return { roots: rootsFromSnapshot(this.watchers.get(session)?.snapshot) };
+			case FS_LIST:
+				return listFolder(rootsFromSnapshot(this.watchers.get(session)?.snapshot), params);
+			case FS_READ:
+				return readFile(rootsFromSnapshot(this.watchers.get(session)?.snapshot), params);
 			case SESSION_START: {
 				const result = await startSession(session);
 				this.discover();
