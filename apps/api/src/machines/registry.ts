@@ -10,6 +10,7 @@ import { machine } from '../db/schema';
 import { publish } from '../live/hub';
 import { failCallsFor } from '../herdr/calls';
 import * as herdrState from '../herdr/state';
+import { closeMachineTerminals } from '../herdr/terminals';
 import { connectionSettings } from './connection-settings';
 import { forgetMachine, recordSample } from './stats';
 
@@ -20,12 +21,17 @@ type Connection = {
 	stats: StatsSample | null;
 	/** Credential sent in a pending rotation, applied once the runner confirms. */
 	pendingCredentialHash: string | null;
+	capabilities: string[];
 };
 
 const connections = new Map<string, Connection>();
 
 export function isOnline(machineId: string): boolean {
 	return connections.has(machineId);
+}
+
+export function hasCapability(machineId: string, capability: string): boolean {
+	return connections.get(machineId)?.capabilities.includes(capability) ?? false;
 }
 
 export function latestStats(machineId: string): StatsSample | null {
@@ -57,9 +63,19 @@ export async function connect(
 	info: { host: HostInfo; runnerVersion: string; publicIp: string | null; capabilities: string[] }
 ) {
 	const previous = connections.get(machineId);
-	if (previous) previous.ws.close(RUNNER_CLOSE.replaced, 'replaced by a newer connection');
+	if (previous) {
+		previous.ws.close(RUNNER_CLOSE.replaced, 'replaced by a newer connection');
+		closeMachineTerminals(machineId);
+	}
 	const now = Date.now();
-	connections.set(machineId, { ws, connectedAt: now, lastMessageAt: now, stats: null, pendingCredentialHash: null });
+	connections.set(machineId, {
+		ws,
+		connectedAt: now,
+		lastMessageAt: now,
+		stats: null,
+		pendingCredentialHash: null,
+		capabilities: info.capabilities
+	});
 	const lastSeenAt = await touchLastSeen(machineId, {
 		host: info.host,
 		runnerVersion: info.runnerVersion,
@@ -83,6 +99,7 @@ export async function disconnect(machineId: string, ws: WSContext) {
 	forgetMachine(machineId);
 	herdrState.forgetMachine(machineId);
 	failCallsFor(machineId);
+	closeMachineTerminals(machineId);
 	const lastSeenAt = await touchLastSeen(machineId);
 	publish([...topics(machineId)], {
 		type: 'machine.connection',

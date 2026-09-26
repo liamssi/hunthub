@@ -4,6 +4,7 @@
 // the runner's normal session reports.
 import { eq } from 'drizzle-orm';
 import { Hono } from 'hono';
+import { upgradeWebSocket } from 'hono/bun';
 import { z } from 'zod';
 import {
 	CONSOLE_METHODS,
@@ -16,7 +17,9 @@ import {
 import { db } from '../db';
 import { consoleAudit, machine } from '../db/schema';
 import { type AuthVariables, requireUser } from '../lib/auth-guard';
+import { hasCapability } from '../machines/registry';
 import { callHerdr, HerdrCallError } from './calls';
+import { closeTerminal, openTerminal, terminalFromBrowser } from './terminals';
 
 const SECRET_KEY = /token|secret|password|passwd|key|credential|auth|cookie|env/i;
 
@@ -87,6 +90,34 @@ async function runConsoleCall(
 	return outcome;
 }
 
+const TRUSTED_ORIGINS = new Set(
+	(process.env.TRUSTED_ORIGINS ?? '').split(',').map((o) => o.trim()).filter(Boolean)
+);
+
+/**
+ * Browsers send cookies on cross-site WebSocket upgrades, so terminal sockets
+ * only accept pages from this hub (same host) or a trusted origin.
+ */
+function sameOrigin(origin: string | undefined, host: string | undefined): boolean {
+	if (!origin) return true; // Not a browser.
+	if (TRUSTED_ORIGINS.has(origin)) return true;
+	try {
+		return new URL(origin).host === host;
+	} catch {
+		return false;
+	}
+}
+
+const terminalQuery = z.object({
+	session: z.string(),
+	target: z.string().regex(/^[A-Za-z0-9:_.-]{1,64}$/),
+	mode: z.enum(['observe', 'control']).default('observe'),
+	transport: z.enum(['cli', 'native']).default('cli'),
+	cols: z.coerce.number().int().min(10).max(1000).default(120),
+	rows: z.coerce.number().int().min(4).max(500).default(32),
+	takeover: z.enum(['0', '1']).default('0')
+});
+
 const sessionParam = (c: { req: { param: (k: string) => string } }) => decodeURIComponent(c.req.param('session'));
 
 export const consoleRoutes = new Hono<{ Variables: AuthVariables }>()
@@ -114,4 +145,64 @@ export const consoleRoutes = new Hono<{ Variables: AuthVariables }>()
 		if (!body.success) return c.json({ error: 'invalid_body' }, 400);
 		const out = await runConsoleCall(c.get('user').id, c.req.param('id'), sessionParam(c), body.data.method, body.data.params);
 		return c.json(out.body, out.status);
-	});
+	})
+	// Live terminal for one pane (WebSocket). Frames arrive as {type:'frame',…};
+	// the browser sends {type:'input'|'resize'|'scroll',…}.
+	.get(
+		'/:id/terminal',
+		async (c, next) => {
+			const host = c.req.header('x-forwarded-host') ?? c.req.header('host');
+			if (!sameOrigin(c.req.header('origin'), host)) return c.json({ error: 'forbidden_origin' }, 403);
+			const q = terminalQuery.safeParse(c.req.query());
+			if (!q.success) return c.json({ error: 'invalid_query' }, 400);
+			const invalid = validateSessionName(q.data.session);
+			if (invalid) return c.json({ error: 'invalid_name', message: invalid }, 400);
+			if (!hasCapability(c.req.param('id'), `terminal:${q.data.transport}`)) {
+				return c.json({ error: 'unsupported', message: `This machine's runner doesn't support the ${q.data.transport} terminal. Update the runner.` }, 409);
+			}
+			await next();
+		},
+		upgradeWebSocket((c) => {
+			const q = terminalQuery.parse(c.req.query());
+			const machineId = c.req.param('id') ?? '';
+			const userId = c.get('user').id;
+			let channel: string | null = null;
+			return {
+				onOpen(_event, ws) {
+					channel = openTerminal(ws, { machineId, ...q, takeover: q.takeover === '1' });
+					if (!channel) {
+						ws.send(JSON.stringify({ type: 'closed', reason: 'The machine is offline.' }));
+						ws.close(1000, 'offline');
+						return;
+					}
+					if (q.mode === 'control') {
+						void db
+							.insert(consoleAudit)
+							.values({
+								userId,
+								machineId,
+								session: q.session,
+								method: 'terminal.control',
+								params: { target: q.target, transport: q.transport, takeover: q.takeover === '1' },
+								outcome: 'ok'
+							})
+							.catch((e) => console.error('console: failed to write audit entry', e));
+					}
+				},
+				onMessage(event) {
+					if (!channel || typeof event.data !== 'string' || event.data.length > 100_000) return;
+					try {
+						const msg = JSON.parse(event.data);
+						// Watching never forwards keystrokes.
+						if (q.mode === 'observe' && msg?.type === 'input') return;
+						terminalFromBrowser(channel, msg);
+					} catch {
+						// Ignore malformed input.
+					}
+				},
+				onClose() {
+					if (channel) closeTerminal(channel);
+				}
+			};
+		})
+	);

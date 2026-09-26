@@ -4,11 +4,13 @@
 	import PlayIcon from '@lucide/svelte/icons/play';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import SquareIcon from '@lucide/svelte/icons/square';
+	import TerminalIcon from '@lucide/svelte/icons/square-terminal';
 	import TrashIcon from '@lucide/svelte/icons/trash-2';
 	import type { Machine, MachineHerdrView, SessionView } from '@hunthub/shared/machines';
 	import StatusBadge from '$lib/components/agents/status-badge.svelte';
 	import ConfirmDialog from '$lib/components/console/confirm-dialog.svelte';
 	import FormDialog, { type FormField } from '$lib/components/console/form-dialog.svelte';
+	import TerminalDialog from '$lib/components/terminal/terminal-dialog.svelte';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
@@ -52,6 +54,9 @@
 		confirmLabel: '',
 		onConfirm: () => {}
 	});
+	let terminal = $state({ open: false, target: '', title: '' });
+	const openTerminal = (paneId: string, agent?: string) =>
+		(terminal = { open: true, target: paneId, title: agent ? `${agent} · ${paneId}` : `Pane ${paneId}` });
 	const openForm = (f: Omit<typeof form, 'open'>) => (form = { ...f, open: true });
 	const openConfirm = (c: Omit<typeof confirm, 'open'>) => (confirm = { ...c, open: true });
 
@@ -262,6 +267,9 @@
 											<span class="text-muted-foreground">shell</span>
 										{/if}
 										<span class="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground" title={pane.cwd ?? undefined}>{pane.cwd ?? ''}</span>
+										<Button size="sm" variant="outline" onclick={() => openTerminal(pane.id, pane.agent?.name)}>
+											<TerminalIcon data-icon="inline-start" />Terminal
+										</Button>
 										<DropdownMenu.Root>
 											<DropdownMenu.Trigger>
 												{#snippet child({ props })}
@@ -291,4 +299,5 @@
 {/if}
 
 <FormDialog bind:open={form.open} title={form.title} description={form.description} fields={form.fields} submitLabel={form.submitLabel} onSubmit={form.onSubmit} />
+<TerminalDialog bind:open={terminal.open} machineId={machine.id} session={name} target={terminal.target} title={terminal.title} />
 <ConfirmDialog bind:open={confirm.open} title={confirm.title} description={confirm.description} confirmLabel={confirm.confirmLabel} onConfirm={confirm.onConfirm} />

@@ -272,6 +272,11 @@ export class HerdrGateway {
 		}
 	}
 
+	/** Whether a session exists on disk (checked before touching its sockets). */
+	hasSession(name: string): boolean {
+		return this.watchers.has(name);
+	}
+
 	/** Runs an allowlisted call for the hub and replies with the result. */
 	async call(id: string, session: string, method: string, params: Record<string, unknown>) {
 		const reply = (ok: boolean, body: { result?: unknown; error?: { code: string; message: string } }) =>

@@ -9,6 +9,7 @@ import {
 } from '@hunthub/shared/runner-protocol';
 import { markRevoked, saveCredential } from './config';
 import { HerdrGateway } from './herdr/gateway';
+import { TerminalManager } from './herdr/terminals';
 import { collectHostInfo } from './host';
 import { StatsCollector } from './stats';
 import { runnerVersion } from './version';
@@ -74,6 +75,7 @@ export function runConnection({ hubUrl, log, ...opts }: Options): Promise<void> 
 			let statsTimer: ReturnType<typeof setInterval> | undefined;
 			let opened = false;
 			let gateway: HerdrGateway | null = null;
+			let terminals: TerminalManager | null = null;
 			const send = (msg: RunnerMessage) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
 
 			/** (Re)starts the heartbeat and stats timers with the hub's current intervals. */
@@ -98,7 +100,7 @@ export function runConnection({ hubUrl, log, ...opts }: Options): Promise<void> 
 					type: 'hello',
 					protocol: RUNNER_PROTOCOL_VERSION,
 					runnerVersion,
-					capabilities: ['stats', 'herdr'],
+					capabilities: ['stats', 'herdr', 'terminal:cli'],
 					host
 				});
 			};
@@ -122,6 +124,9 @@ export function runConnection({ hubUrl, log, ...opts }: Options): Promise<void> 
 						gateway?.stop();
 						gateway = new HerdrGateway(send, log);
 						gateway.start();
+						const g = gateway;
+						terminals?.closeAll();
+						terminals = new TerminalManager(send, (name) => g.hasSession(name), log);
 						// Host details rarely change; check once a minute.
 						timers.push(
 							setInterval(() => {
@@ -140,6 +145,21 @@ export function runConnection({ hubUrl, log, ...opts }: Options): Promise<void> 
 						credential = msg.credential;
 						send({ type: 'credential.rotated' });
 						log('credential rotated');
+						break;
+					case 'term.open':
+						terminals?.open(msg);
+						break;
+					case 'term.input':
+						terminals?.input(msg.channel, msg.bytes);
+						break;
+					case 'term.resize':
+						terminals?.resize(msg.channel, msg.cols, msg.rows);
+						break;
+					case 'term.scroll':
+						terminals?.scroll(msg.channel, msg.direction, msg.lines);
+						break;
+					case 'term.close':
+						terminals?.close(msg.channel);
 						break;
 					case 'herdr.call':
 						void gateway?.call(msg.id, msg.session, msg.method, msg.params);
@@ -160,6 +180,8 @@ export function runConnection({ hubUrl, log, ...opts }: Options): Promise<void> 
 				clearInterval(statsTimer);
 				gateway?.stop();
 				gateway = null;
+				terminals?.closeAll();
+				terminals = null;
 				if (!opened && (await rejectionReason(hubUrl, credential)) === 'revoked') {
 					const reason = 'This machine is not known to the hub (removed or credential revoked).';
 					markRevoked(reason);

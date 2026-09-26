@@ -366,6 +366,93 @@ describe('herdr console', () => {
 	});
 });
 
+describe('live terminals', () => {
+	/** A fake runner that answers term.open with a frame and echoes input back as frames. */
+	async function terminalRunner(capabilities = ['herdr', 'terminal:cli']) {
+		const { credential, machineId } = await enrolledMachine();
+		const ws = new WebSocket(`${base.replace('http', 'ws')}/api/runner/ws`, { headers: { authorization: `Bearer ${credential}` } });
+		const received: any[] = [];
+		const frame = (channel: string, text: string) =>
+			ws.send(JSON.stringify({ type: 'term.frame', channel, frame: { seq: 1, full: true, width: 80, height: 24, bytes: btoa(text) } }));
+		await new Promise<void>((resolve) => {
+			ws.onopen = () => ws.send(JSON.stringify({ type: 'hello', protocol: RUNNER_PROTOCOL_VERSION, runnerVersion: 'test', capabilities, host }));
+			ws.onmessage = (e) => {
+				const msg = JSON.parse(String(e.data));
+				if (msg.type === 'welcome') return resolve();
+				received.push(msg);
+				if (msg.type === 'term.open') frame(msg.channel, 'hello');
+				if (msg.type === 'term.input') frame(msg.channel, atob(msg.bytes));
+			};
+		});
+		return { machineId, received, close: () => ws.close() };
+	}
+
+	function openBrowser(machineId: string, query: Record<string, string>, origin = base) {
+		const q = new URLSearchParams({ session: 'acme-1', target: 'w1:p1', ...query });
+		const ws = new WebSocket(`${base.replace('http', 'ws')}/api/machines/${machineId}/terminal?${q}`, {
+			headers: { cookie: adminCookie, origin }
+		} as any);
+		const messages: any[] = [];
+		const closed = new Promise<void>((resolve) => (ws.onclose = () => resolve()));
+		ws.onmessage = (e) => messages.push(JSON.parse(String(e.data)));
+		return { ws, messages, closed, opened: new Promise<void>((resolve) => (ws.onopen = () => resolve())) };
+	}
+
+	test('frames and input are relayed; closing the browser closes the channel; control is audited', async () => {
+		const r = await terminalRunner();
+		const b = openBrowser(r.machineId, { mode: 'control', cols: '100', rows: '30' });
+		await b.opened;
+		await waitFor(() => b.messages.length === 1);
+		expect(b.messages[0]).toMatchObject({ type: 'frame', bytes: btoa('hello') });
+		const open = r.received.find((m) => m.type === 'term.open');
+		expect(open).toMatchObject({ session: 'acme-1', target: 'w1:p1', mode: 'control', transport: 'cli', cols: 100, rows: 30, takeover: false });
+
+		b.ws.send(JSON.stringify({ type: 'input', bytes: btoa('ls\r') }));
+		await waitFor(() => b.messages.length === 2);
+		expect(atob(b.messages[1].bytes)).toBe('ls\r');
+
+		b.ws.close();
+		await waitFor(() => r.received.some((m) => m.type === 'term.close' && m.channel === open.channel));
+		const audit = await db.select().from(consoleAudit).where(eq(consoleAudit.machineId, r.machineId));
+		expect(audit).toHaveLength(1);
+		expect(audit[0]).toMatchObject({ method: 'terminal.control', session: 'acme-1', outcome: 'ok' });
+		r.close();
+	});
+
+	test('watching never forwards keystrokes', async () => {
+		const r = await terminalRunner();
+		const b = openBrowser(r.machineId, { mode: 'observe' });
+		await b.opened;
+		await waitFor(() => b.messages.length === 1);
+		b.ws.send(JSON.stringify({ type: 'input', bytes: btoa('rm -rf /\r') }));
+		b.ws.send(JSON.stringify({ type: 'resize', cols: 90, rows: 20 }));
+		await waitFor(() => r.received.some((m) => m.type === 'term.resize'));
+		expect(r.received.some((m) => m.type === 'term.input')).toBe(false);
+		b.ws.close();
+		r.close();
+	});
+
+	test('the browser is told when the machine disconnects', async () => {
+		const r = await terminalRunner();
+		const b = openBrowser(r.machineId, { mode: 'observe' });
+		await b.opened;
+		await waitFor(() => b.messages.length === 1);
+		r.close();
+		await b.closed;
+		expect(b.messages.at(-1)).toMatchObject({ type: 'closed' });
+	});
+
+	test('other sites, unsupported runners and bad targets are refused before upgrading', async () => {
+		const r = await terminalRunner(['herdr']);
+		const url = (q: string) => `/machines/${r.machineId}/terminal?session=acme-1&${q}`;
+		expect((await api(url('target=w1:p1'), { headers: { origin: 'https://evil.example' } })).status).toBe(403);
+		expect((await api(url('target=w1:p1'))).status).toBe(409);
+		expect((await api(url('target=$(id)'))).status).toBe(400);
+		expect(r.received.some((m) => m.type === 'term.open')).toBe(false);
+		r.close();
+	});
+});
+
 describe('settings', () => {
 	test('an offline threshold below 3 heartbeats is rejected', async () => {
 		const res = await api('/settings/machines/connection', {

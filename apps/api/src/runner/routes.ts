@@ -22,6 +22,7 @@ import { publish } from '../live/hub';
 import { connectionSettings } from '../machines/connection-settings';
 import { resolveCall } from '../herdr/calls';
 import * as herdrState from '../herdr/state';
+import { terminalClosed, terminalFrame } from '../herdr/terminals';
 import * as registry from '../machines/registry';
 import { toMachineDto } from '../machines/routes';
 
@@ -150,6 +151,12 @@ export const runnerRoutes = new Hono<{ Variables: RunnerVariables }>()
 
 					registry.markActivity(machineId);
 					switch (msg.type) {
+						case 'term.frame':
+							terminalFrame(machineId, msg.channel, msg.frame);
+							break;
+						case 'term.closed':
+							terminalClosed(machineId, msg.channel, msg.reason);
+							break;
 						case 'stats':
 							registry.handleStats(machineId, msg.sample);
 							break;

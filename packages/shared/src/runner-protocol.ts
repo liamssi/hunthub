@@ -6,7 +6,7 @@ import { z } from 'zod';
 export const RUNNER_PROTOCOL_VERSION = 1;
 
 /** Largest runner message the server accepts, in bytes. */
-export const RUNNER_MAX_MESSAGE_BYTES = 256 * 1024;
+export const RUNNER_MAX_MESSAGE_BYTES = 4 * 1024 * 1024;
 
 export const hostInfoSchema = z.object({
 	hostname: z.string().max(255),
@@ -50,8 +50,28 @@ export type HerdrSessionReport = z.infer<typeof herdrSessionReportSchema>;
 
 const herdrErrorSchema = z.object({ code: z.string().max(64), message: z.string().max(2000) });
 
+// Live terminals. A terminal is a channel between a browser and one pane,
+// relayed by the hub. "cli" streams through Herdr's own
+// `herdr terminal session observe|control`; "native" speaks Herdr's endpoint
+// protocol directly. Both deliver ANSI frames for xterm.js.
+export const terminalTransports = ['cli', 'native'] as const;
+export type TerminalTransport = (typeof terminalTransports)[number];
+
+export const terminalFrameSchema = z.object({
+	seq: z.number().int(),
+	/** True when `bytes` redraws the whole screen. */
+	full: z.boolean(),
+	width: z.number().int(),
+	height: z.number().int(),
+	/** Base64 ANSI to write to the terminal as is. */
+	bytes: z.string()
+});
+export type TerminalFrame = z.infer<typeof terminalFrameSchema>;
+
 // Runner -> server
 export const runnerMessageSchema = z.discriminatedUnion('type', [
+	z.object({ type: z.literal('term.frame'), channel: z.string().max(64), frame: terminalFrameSchema }),
+	z.object({ type: z.literal('term.closed'), channel: z.string().max(64), reason: z.string().max(500) }),
 	z.object({
 		type: z.literal('hello'),
 		protocol: z.number().int(),
@@ -100,6 +120,22 @@ export const serverMessageSchema = z.discriminatedUnion('type', [
 		method: z.string().max(128),
 		params: z.record(z.string(), z.unknown())
 	}),
+	z.object({
+		type: z.literal('term.open'),
+		channel: z.string().max(64),
+		session: z.string().max(128),
+		target: z.string().max(128),
+		mode: z.enum(['observe', 'control']),
+		transport: z.enum(terminalTransports),
+		cols: z.number().int().min(10).max(1000),
+		rows: z.number().int().min(4).max(500),
+		takeover: z.boolean()
+	}),
+	/** Keyboard input (base64 bytes), only for control terminals. */
+	z.object({ type: z.literal('term.input'), channel: z.string().max(64), bytes: z.string().max(65536) }),
+	z.object({ type: z.literal('term.resize'), channel: z.string().max(64), cols: z.number().int().min(10).max(1000), rows: z.number().int().min(4).max(500) }),
+	z.object({ type: z.literal('term.scroll'), channel: z.string().max(64), direction: z.enum(['up', 'down']), lines: z.number().int().min(1).max(500) }),
+	z.object({ type: z.literal('term.close'), channel: z.string().max(64) }),
 	/** Updated timings; the runner applies them immediately. */
 	z.object({
 		type: z.literal('settings'),
