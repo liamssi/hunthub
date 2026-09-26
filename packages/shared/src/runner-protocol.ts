@@ -37,6 +37,19 @@ export const statsSampleSchema = z.object({
 });
 export type StatsSample = z.infer<typeof statsSampleSchema>;
 
+/**
+ * A Herdr session on the machine. The snapshot is Herdr's own `session.snapshot`
+ * result, forwarded as is; the hub interprets it.
+ */
+export const herdrSessionReportSchema = z.object({
+	name: z.string().min(1).max(128),
+	state: z.enum(['running', 'stopped']),
+	snapshot: z.unknown().nullable()
+});
+export type HerdrSessionReport = z.infer<typeof herdrSessionReportSchema>;
+
+const herdrErrorSchema = z.object({ code: z.string().max(64), message: z.string().max(2000) });
+
 // Runner -> server
 export const runnerMessageSchema = z.discriminatedUnion('type', [
 	z.object({
@@ -49,7 +62,19 @@ export const runnerMessageSchema = z.discriminatedUnion('type', [
 	z.object({ type: z.literal('heartbeat'), ts: z.number().int() }),
 	z.object({ type: z.literal('stats'), sample: statsSampleSchema }),
 	z.object({ type: z.literal('host.changed'), host: hostInfoSchema }),
-	z.object({ type: z.literal('credential.rotated') })
+	z.object({ type: z.literal('credential.rotated') }),
+	/** A session's current state; sent when it changes. */
+	z.object({ type: z.literal('herdr.session'), session: herdrSessionReportSchema }),
+	/** A session disappeared from the machine. */
+	z.object({ type: z.literal('herdr.session.removed'), name: z.string().max(128) }),
+	/** Reply to a `herdr.call`. */
+	z.object({
+		type: z.literal('herdr.result'),
+		id: z.string().max(128),
+		ok: z.boolean(),
+		result: z.unknown().optional(),
+		error: herdrErrorSchema.optional()
+	})
 ]);
 export type RunnerMessage = z.infer<typeof runnerMessageSchema>;
 
@@ -67,6 +92,14 @@ export const serverMessageSchema = z.discriminatedUnion('type', [
 	}),
 	z.object({ type: z.literal('error'), code: z.enum(runnerErrorCodes), message: z.string() }),
 	z.object({ type: z.literal('credential.rotate'), credential: z.string() }),
+	/** Run a Herdr API call in a session (the runner enforces an allowlist). */
+	z.object({
+		type: z.literal('herdr.call'),
+		id: z.string().max(128),
+		session: z.string().max(128),
+		method: z.string().max(128),
+		params: z.record(z.string(), z.unknown())
+	}),
 	/** Updated timings; the runner applies them immediately. */
 	z.object({
 		type: z.literal('settings'),

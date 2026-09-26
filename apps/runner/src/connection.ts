@@ -8,6 +8,7 @@ import {
 	serverMessageSchema
 } from '@hunthub/shared/runner-protocol';
 import { markRevoked, saveCredential } from './config';
+import { HerdrGateway } from './herdr/gateway';
 import { collectHostInfo } from './host';
 import { StatsCollector } from './stats';
 import { runnerVersion } from './version';
@@ -72,6 +73,7 @@ export function runConnection({ hubUrl, log, ...opts }: Options): Promise<void> 
 			let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 			let statsTimer: ReturnType<typeof setInterval> | undefined;
 			let opened = false;
+			let gateway: HerdrGateway | null = null;
 			const send = (msg: RunnerMessage) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
 
 			/** (Re)starts the heartbeat and stats timers with the hub's current intervals. */
@@ -117,6 +119,9 @@ export function runConnection({ hubUrl, log, ...opts }: Options): Promise<void> 
 						log(`connected to ${hubUrl} as machine ${msg.machineId}`);
 						collector.sample(); // prime rate counters
 						applyTimings(msg.heartbeatIntervalMs, msg.statsIntervalMs);
+						gateway?.stop();
+						gateway = new HerdrGateway(send, log);
+						gateway.start();
 						// Host details rarely change; check once a minute.
 						timers.push(
 							setInterval(() => {
@@ -136,6 +141,9 @@ export function runConnection({ hubUrl, log, ...opts }: Options): Promise<void> 
 						send({ type: 'credential.rotated' });
 						log('credential rotated');
 						break;
+					case 'herdr.call':
+						void gateway?.call(msg.id, msg.session, msg.method, msg.params);
+						break;
 					case 'settings':
 						applyTimings(msg.heartbeatIntervalMs, msg.statsIntervalMs);
 						log(`timings updated: heartbeat ${msg.heartbeatIntervalMs}ms, stats ${msg.statsIntervalMs}ms`);
@@ -150,6 +158,8 @@ export function runConnection({ hubUrl, log, ...opts }: Options): Promise<void> 
 				for (const t of timers) clearInterval(t);
 				clearInterval(heartbeatTimer);
 				clearInterval(statsTimer);
+				gateway?.stop();
+				gateway = null;
 				if (!opened && (await rejectionReason(hubUrl, credential)) === 'revoked') {
 					const reason = 'This machine is not known to the hub (removed or credential revoked).';
 					markRevoked(reason);
