@@ -17,16 +17,19 @@ async function send(url: string, init: RequestInit): Promise<Outcome> {
 	return { ok: false, code: body.error ?? 'failed', message: body.message ?? 'The action failed.' };
 }
 
-/** Runs an action and shows the outcome; returns whether it succeeded. */
-async function run(label: string, url: string, init: RequestInit, successMessage?: string): Promise<boolean> {
+/** Runs an action and shows the outcome (errors always; success only with a message). */
+async function runWithResult(label: string, url: string, init: RequestInit, successMessage?: string): Promise<Outcome> {
 	const out = await send(url, init);
 	if (out.ok) {
 		if (successMessage) toast.success(successMessage);
-		return true;
-	}
-	if (out.code === 'uncertain') toast.warning(`${label}: not confirmed`, { description: out.message });
+	} else if (out.code === 'uncertain') toast.warning(`${label}: not confirmed`, { description: out.message });
 	else toast.error(`${label} failed`, { description: out.message });
-	return false;
+	return out;
+}
+
+/** Runs an action and shows the outcome; returns whether it succeeded. */
+async function run(label: string, url: string, init: RequestInit, successMessage?: string): Promise<boolean> {
+	return (await runWithResult(label, url, init, successMessage)).ok;
 }
 
 const base = (machineId: string) => `/api/machines/${machineId}/sessions`;
@@ -51,3 +54,7 @@ export const consoleCall = (
 	successMessage?: string
 ) =>
 	run(label, `${sessionUrl(machineId, session)}/call`, { method: 'POST', body: JSON.stringify({ method, params }) }, successMessage);
+
+/** Like `consoleCall`, but also returns Herdr's result (e.g. the pane a split created). */
+export const consoleRequest = (machineId: string, session: string, label: string, method: string, params: Record<string, unknown>) =>
+	runWithResult(label, `${sessionUrl(machineId, session)}/call`, { method: 'POST', body: JSON.stringify({ method, params }) });

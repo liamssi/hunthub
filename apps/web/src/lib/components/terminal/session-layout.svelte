@@ -5,8 +5,13 @@
 	// terminal. Recently visited tabs stay connected so switching is instant.
 	// Dividers can be dragged (the ratio is applied in Herdr); maximizing a pane
 	// only changes this view.
-	import type { Snippet } from 'svelte';
+	import type { Component, Snippet } from 'svelte';
 	import { tick, untrack } from 'svelte';
+	import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
+	import PencilIcon from '@lucide/svelte/icons/pencil';
+	import SquareSplitHorizontalIcon from '@lucide/svelte/icons/square-split-horizontal';
+	import SquareSplitVerticalIcon from '@lucide/svelte/icons/square-split-vertical';
+	import XIcon from '@lucide/svelte/icons/x';
 	import BotIcon from '@lucide/svelte/icons/bot';
 	import Columns2Icon from '@lucide/svelte/icons/columns-2';
 	import EyeIcon from '@lucide/svelte/icons/eye';
@@ -22,8 +27,14 @@
 	import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal';
 	import type { AgentStatus, AgentView, PaneRect, SessionView, SplitView, TabView, WorkspaceView } from '@hunthub/shared/machines';
 	import StatusBadge from '$lib/components/agents/status-badge.svelte';
+	import ConfirmDialog from '$lib/components/console/confirm-dialog.svelte';
+	import FormDialog, { type FormField } from '$lib/components/console/form-dialog.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
-	import { consoleCall } from '$lib/console';
+	import * as ContextMenu from '$lib/components/ui/context-menu/index.js';
+	import * as Dialog from '$lib/components/ui/dialog/index.js';
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
+	import { Kbd } from '$lib/components/ui/kbd/index.js';
+	import { consoleCall, consoleRequest } from '$lib/console';
 	import { cn } from '$lib/utils.js';
 	import TerminalView, { type TerminalMode, type TerminalState, type TerminalTransport } from './terminal-view.svelte';
 
@@ -153,6 +164,241 @@
 	const toggleMaximize = (tabId: string, paneId: string) =>
 		(maximized[tabId] = maximized[tabId] === paneId ? null : paneId);
 
+	// --- Actions in place -------------------------------------------------------
+	// Everything here asks Herdr for a change; the new state arrives through live updates.
+	type Action = { label: string; icon?: Component; shortcut?: string; destructive?: boolean; run: () => void };
+
+	let form = $state<{ open: boolean; title: string; description?: string; fields: FormField[]; submitLabel: string; onSubmit: (v: Record<string, string>) => Promise<boolean> }>({
+		open: false,
+		title: '',
+		fields: [],
+		submitLabel: '',
+		onSubmit: async () => true
+	});
+	let confirm = $state<{ open: boolean; title: string; description: string; confirmLabel: string; onConfirm: () => void }>({
+		open: false,
+		title: '',
+		description: '',
+		confirmLabel: '',
+		onConfirm: () => {}
+	});
+	const openForm = (f: Omit<typeof form, 'open'>) => (form = { ...f, open: true });
+	const openConfirm = (c: Omit<typeof confirm, 'open'>) => (confirm = { ...c, open: true });
+	let shortcutsOpen = $state(false);
+
+	const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+	/** Workspace shortcuts use Alt+Shift, which terminal programs rarely need. */
+	const keys = (k: string) => (isMac ? `⌥⇧${k}` : `Alt+Shift+${k}`);
+
+	/** Focuses a pane once its terminal exists (a new pane appears with the next live update). */
+	async function focusWhenReady(tabId: string, paneId: string) {
+		for (let i = 0; i < 30; i++) {
+			const el = document.querySelector<HTMLTextAreaElement>(`[data-pane="${CSS.escape(paneId)}"] textarea`);
+			if (el) {
+				activePane[tabId] = paneId;
+				el.focus();
+				return;
+			}
+			await new Promise((r) => setTimeout(r, 100));
+		}
+	}
+
+	async function splitPane(tabId: string, paneId: string, direction: 'right' | 'down') {
+		const out = await consoleRequest(machineId, session.name, 'Split pane', 'pane.split', { target_pane_id: paneId, direction });
+		const created = out.ok ? (out.result as { pane?: { pane_id?: string } } | null)?.pane?.pane_id : undefined;
+		maximized[tabId] = null;
+		if (created) void focusWhenReady(tabId, created);
+	}
+
+	const paneName = (t: TabView, paneId: string) => t.panes.find((p) => p.id === paneId)?.agent?.name ?? 'this shell';
+	const closePane = (t: TabView, paneId: string) =>
+		openConfirm({
+			title: 'Close pane?',
+			description: `Closing it stops ${paneName(t, paneId)} and anything else running in it.`,
+			confirmLabel: 'Close pane',
+			onConfirm: () => void call('Close pane', 'pane.close', { pane_id: paneId })
+		});
+
+	async function newTab(spaceId: string) {
+		const out = await consoleRequest(machineId, session.name, 'New tab', 'tab.create', { workspace_id: spaceId });
+		const created = out.ok ? (out.result as { tab?: { tab_id?: string } } | null)?.tab?.tab_id : undefined;
+		if (created) selectTab(spaceId, created);
+	}
+	const renameTab = (t: TabView) =>
+		openForm({
+			title: 'Rename tab',
+			fields: [{ name: 'label', label: 'Name', value: t.label, required: true }],
+			submitLabel: 'Rename',
+			onSubmit: (v) => call('Rename tab', 'tab.rename', { tab_id: t.id, label: v.label })
+		});
+	const closeTab = (t: TabView) =>
+		openConfirm({
+			title: `Close tab ${t.label}?`,
+			description: 'Its panes are closed, and anything running in them (including agents) is stopped.',
+			confirmLabel: 'Close tab',
+			onConfirm: () => void call('Close tab', 'tab.close', { tab_id: t.id })
+		});
+
+	const newSpace = () =>
+		openForm({
+			title: 'New space',
+			description: 'A space is a Herdr workspace: its own tabs and panes, usually for one project.',
+			fields: [
+				{ name: 'label', label: 'Name', placeholder: 'recon' },
+				{ name: 'cwd', label: 'Folder', placeholder: '/home/you/project', description: 'Where its first pane starts. Empty: Herdr default.' }
+			],
+			submitLabel: 'Create',
+			onSubmit: async (v) => {
+				const out = await consoleRequest(machineId, session.name, 'New space', 'workspace.create', {
+					...(v.label && { label: v.label }),
+					...(v.cwd && { cwd: v.cwd })
+				});
+				const created = out.ok ? (out.result as { workspace?: { workspace_id?: string } } | null)?.workspace?.workspace_id : undefined;
+				if (created) selectedSpaceId = created;
+				return out.ok;
+			}
+		});
+	const renameSpace = (w: WorkspaceView) =>
+		openForm({
+			title: 'Rename space',
+			fields: [{ name: 'label', label: 'Name', value: w.label, required: true }],
+			submitLabel: 'Rename',
+			onSubmit: (v) => call('Rename space', 'workspace.rename', { workspace_id: w.id, label: v.label })
+		});
+	const newWorktree = (w: WorkspaceView) =>
+		openForm({
+			title: `New worktree of ${w.worktree?.repoName ?? w.label}`,
+			description: 'Creates a git worktree on a new or existing branch and opens it as a space.',
+			fields: [
+				{ name: 'branch', label: 'Branch', placeholder: 'feature-x', required: true },
+				{ name: 'base', label: 'Start from', placeholder: 'main', description: 'For a new branch; empty: the current HEAD.' }
+			],
+			submitLabel: 'Create worktree',
+			onSubmit: (v) =>
+				call('New worktree', 'worktree.create', { cwd: w.worktree!.repoRoot, branch: v.branch, ...(v.base && { base: v.base }) })
+		});
+	const removeWorktree = (w: WorkspaceView, force = false) =>
+		openConfirm({
+			title: force ? `Remove worktree ${w.label} anyway?` : `Remove worktree ${w.label}?`,
+			description: force
+				? 'Uncommitted changes in it are lost. The branch itself is kept.'
+				: 'Its space is closed and the checkout is removed from disk. The branch is kept.',
+			confirmLabel: force ? 'Remove anyway' : 'Remove worktree',
+			onConfirm: async () => {
+				const ok = await call('Remove worktree', 'worktree.remove', { workspace_id: w.id, ...(force && { force: true }) });
+				// A dirty checkout is refused; offer to force it.
+				if (!ok && !force) removeWorktree(w, true);
+			}
+		});
+	const closeSpace = (w: WorkspaceView) =>
+		openConfirm({
+			title: `Close space ${w.label}?`,
+			description: 'Its tabs and panes are closed, and anything running in them (including agents) is stopped.',
+			confirmLabel: 'Close space',
+			onConfirm: () => void call('Close space', 'workspace.close', { workspace_id: w.id })
+		});
+
+	// Menus are lists of groups, shared by right-click and ⋯ menus.
+	function paneActions(t: TabView, paneId: string): Action[][] {
+		const max = maximized[t.id] === paneId;
+		return [
+			[
+				{ label: 'Split right', icon: SquareSplitHorizontalIcon, shortcut: keys('\\'), run: () => void splitPane(t.id, paneId, 'right') },
+				{ label: 'Split down', icon: SquareSplitVerticalIcon, shortcut: keys('-'), run: () => void splitPane(t.id, paneId, 'down') },
+				...(rectsFor(t).length > 1
+					? [{ label: max ? 'Restore layout' : 'Maximize', icon: max ? Minimize2Icon : Maximize2Icon, shortcut: keys('Z'), run: () => toggleMaximize(t.id, paneId) }]
+					: [])
+			],
+			[{ label: 'Close pane', icon: XIcon, shortcut: keys('X'), destructive: true, run: () => closePane(t, paneId) }]
+		];
+	}
+	function tabActions(w: WorkspaceView, t: TabView): Action[][] {
+		return [
+			[
+				{ label: 'New tab', icon: PlusIcon, shortcut: keys('T'), run: () => void newTab(w.id) },
+				{ label: 'Rename tab', icon: PencilIcon, run: () => renameTab(t) }
+			],
+			[{ label: 'Close tab', icon: XIcon, destructive: true, run: () => closeTab(t) }]
+		];
+	}
+	function spaceActions(w: WorkspaceView): Action[][] {
+		return [
+			[
+				{ label: 'New tab', icon: PlusIcon, run: () => void newTab(w.id) },
+				{ label: 'Rename space', icon: PencilIcon, run: () => renameSpace(w) },
+				...(w.worktree ? [{ label: 'New worktree', icon: GitBranchIcon, run: () => newWorktree(w) }] : [])
+			],
+			[
+				...(w.worktree?.linked ? [{ label: 'Remove worktree', icon: GitBranchIcon, destructive: true, run: () => removeWorktree(w) }] : []),
+				{ label: 'Close space', icon: XIcon, destructive: true, run: () => closeSpace(w) }
+			]
+		];
+	}
+
+	// --- Keyboard: Alt+Shift shortcuts, taken before the terminal sees them -------
+	function paneInDirection(t: TabView, from: string, dir: 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown') {
+		const rects = rectsFor(t);
+		const a = rects.find((r) => r.paneId === from);
+		if (!a) return rects[0]?.paneId;
+		const eps = 0.001;
+		const cx = a.x + a.width / 2;
+		const cy = a.y + a.height / 2;
+		let best: { id: string; score: number } | null = null;
+		for (const r of rects) {
+			if (r.paneId === from) continue;
+			const gap =
+				dir === 'ArrowRight' ? r.x - (a.x + a.width) : dir === 'ArrowLeft' ? a.x - (r.x + r.width) : dir === 'ArrowDown' ? r.y - (a.y + a.height) : a.y - (r.y + r.height);
+			if (gap < -eps) continue;
+			// Nearest in the direction first, then best aligned.
+			const offset = dir === 'ArrowLeft' || dir === 'ArrowRight' ? Math.abs(r.y + r.height / 2 - cy) : Math.abs(r.x + r.width / 2 - cx);
+			const score = gap * 10 + offset;
+			if (!best || score < best.score) best = { id: r.paneId, score };
+		}
+		return best?.id;
+	}
+
+	function onKeydown(e: KeyboardEvent) {
+		if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey || form.open || confirm.open) return;
+		const w = space;
+		const t = tab;
+		if (!w || !t) return;
+		const paneId = activePane[t.id] ?? rectsFor(t)[0]?.paneId;
+		const tabIndex = w.tabs.findIndex((x) => x.id === t.id);
+		const code = e.code;
+		if (code === 'ArrowLeft' || code === 'ArrowRight' || code === 'ArrowUp' || code === 'ArrowDown') {
+			const next = paneId && paneInDirection(t, paneId, code);
+			if (next) void focusPane(t.id, next);
+		} else if (code === 'Backslash' && paneId) void splitPane(t.id, paneId, 'right');
+		else if (code === 'Minus' && paneId) void splitPane(t.id, paneId, 'down');
+		else if (code === 'KeyZ' && paneId && rectsFor(t).length > 1) toggleMaximize(t.id, paneId);
+		else if (code === 'KeyX' && paneId) closePane(t, paneId);
+		else if (code === 'KeyT') void newTab(w.id);
+		else if (code === 'KeyN') newSpace();
+		else if (code === 'BracketLeft' || code === 'BracketRight') {
+			const next = w.tabs[(tabIndex + (code === 'BracketRight' ? 1 : -1) + w.tabs.length) % w.tabs.length];
+			if (next) selectTab(w.id, next.id);
+		} else if (/^Digit[1-9]$/.test(code)) {
+			const next = w.tabs[Number(code.slice(5)) - 1];
+			if (next) selectTab(w.id, next.id);
+		} else if (code === 'Slash') shortcutsOpen = true;
+		else return;
+		e.preventDefault();
+		e.stopPropagation();
+	}
+
+	const shortcutList = [
+		['Move between panes', '←↑→↓'],
+		['Split right', '\\'],
+		['Split down', '-'],
+		['Maximize or restore pane', 'Z'],
+		['Close pane', 'X'],
+		['New tab', 'T'],
+		['Previous / next tab', '[ ]'],
+		['Go to tab 1–9', '1…9'],
+		['New space', 'N'],
+		['Show shortcuts', '/']
+	] as const;
+
 	// --- Dividers: a preview line follows the pointer; the ratio is sent on release.
 	let drag = $state<{ tabId: string; key: string; ratio: number } | null>(null);
 	const splitKey = (sp: SplitView) => sp.path.map((b) => (b ? 1 : 0)).join('') || 'root';
@@ -203,6 +449,38 @@
 	}
 </script>
 
+<svelte:window onkeydowncapture={onKeydown} />
+
+{#snippet dropdownItems(groups: Action[][])}
+	{#each groups.filter((g) => g.length) as group, i (i)}
+		{#if i > 0}<DropdownMenu.Separator />{/if}
+		<DropdownMenu.Group>
+			{#each group as a (a.label)}
+				<DropdownMenu.Item variant={a.destructive ? 'destructive' : 'default'} onSelect={a.run}>
+					{#if a.icon}<a.icon />{/if}
+					{a.label}
+					{#if a.shortcut}<DropdownMenu.Shortcut>{a.shortcut}</DropdownMenu.Shortcut>{/if}
+				</DropdownMenu.Item>
+			{/each}
+		</DropdownMenu.Group>
+	{/each}
+{/snippet}
+
+{#snippet contextItems(groups: Action[][])}
+	{#each groups.filter((g) => g.length) as group, i (i)}
+		{#if i > 0}<ContextMenu.Separator />{/if}
+		<ContextMenu.Group>
+			{#each group as a (a.label)}
+				<ContextMenu.Item variant={a.destructive ? 'destructive' : 'default'} onSelect={a.run}>
+					{#if a.icon}<a.icon />{/if}
+					{a.label}
+					{#if a.shortcut}<ContextMenu.Shortcut>{a.shortcut}</ContextMenu.Shortcut>{/if}
+				</ContextMenu.Item>
+			{/each}
+		</ContextMenu.Group>
+	{/each}
+{/snippet}
+
 <!-- The workspace is always dark, like the terminals it holds. -->
 <div class="dark flex size-full min-h-0 bg-background text-foreground">
 	{#if sidebarOpen}
@@ -215,38 +493,59 @@
 				<section class="flex flex-col gap-0.5 p-2" aria-labelledby="spaces-heading">
 					<div class="flex h-7 items-center justify-between px-2">
 						<h2 id="spaces-heading" class="text-xs font-medium text-muted-foreground">Spaces</h2>
-						<Button
-							size="icon-sm"
-							variant="ghost"
-							class="size-6"
-							aria-label="New space"
-							title="New space"
-							onclick={() => call('New space', 'workspace.create', {})}
-						>
+						<Button size="icon-sm" variant="ghost" class="size-6" aria-label="New space" title="New space ({keys('N')})" onclick={newSpace}>
 							<PlusIcon />
 						</Button>
 					</div>
 					{#each session.workspaces as w (w.id)}
 						{@const current = w.id === space?.id}
-						<button
-							type="button"
-							class={cn(
-								'group flex h-8 min-w-0 items-center gap-2 rounded-md px-2 text-start text-sm text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-								current && 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
-							)}
-							aria-current={current ? 'true' : undefined}
-							onclick={() => (selectedSpaceId = w.id)}
-						>
-							{#if w.worktree}
-								<GitBranchIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-							{:else}
-								<FolderIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-							{/if}
-							<span class="truncate" title={w.worktree ? `${w.label} · ${w.worktree.checkoutPath}` : w.label}>{w.label}</span>
-							<span class="ms-auto flex shrink-0 items-center gap-1.5">
-								{#if w.agents.length}<StatusBadge status={w.status} compact />{/if}
-							</span>
-						</button>
+						<ContextMenu.Root>
+							<ContextMenu.Trigger>
+								{#snippet child({ props })}
+									<div
+										{...props}
+										class={cn(
+											'group/space flex h-8 min-w-0 items-center rounded-md text-sm text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+											current && 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
+										)}
+									>
+										<button
+											type="button"
+											class="flex h-full min-w-0 flex-1 items-center gap-2 rounded-md ps-2 text-start outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+											aria-current={current ? 'true' : undefined}
+											onclick={() => (selectedSpaceId = w.id)}
+										>
+											{#if w.worktree}
+												<GitBranchIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+											{:else}
+												<FolderIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+											{/if}
+											<span class="truncate" title={w.worktree ? `${w.label} · ${w.worktree.checkoutPath}` : w.label}>{w.label}</span>
+											<span class="ms-auto flex shrink-0 items-center pe-1">
+												{#if w.agents.length}<StatusBadge status={w.status} compact />{/if}
+											</span>
+										</button>
+										<DropdownMenu.Root>
+											<DropdownMenu.Trigger>
+												{#snippet child({ props: menuProps })}
+													<Button
+														{...menuProps}
+														size="icon-sm"
+														variant="ghost"
+														class="me-0.5 size-6 opacity-0 group-hover/space:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+														aria-label="{w.label} actions"
+													>
+														<EllipsisIcon />
+													</Button>
+												{/snippet}
+											</DropdownMenu.Trigger>
+											<DropdownMenu.Content align="start" class="w-52">{@render dropdownItems(spaceActions(w))}</DropdownMenu.Content>
+										</DropdownMenu.Root>
+									</div>
+								{/snippet}
+							</ContextMenu.Trigger>
+							<ContextMenu.Content class="w-52">{@render contextItems(spaceActions(w))}</ContextMenu.Content>
+						</ContextMenu.Root>
 					{:else}
 						<p class="px-2 py-1 text-sm text-muted-foreground">No spaces yet.</p>
 					{/each}
@@ -276,7 +575,10 @@
 				</section>
 			</div>
 
-			<div class="flex shrink-0 justify-end border-t p-1.5">
+			<div class="flex shrink-0 items-center justify-between border-t p-1.5">
+				<Button size="sm" variant="ghost" class="h-7 px-2 text-xs text-muted-foreground" onclick={() => (shortcutsOpen = true)}>
+					<KeyboardIcon data-icon="inline-start" />Shortcuts
+				</Button>
 				<Button size="icon-sm" variant="ghost" aria-label="Hide sidebar" title="Hide sidebar" onclick={() => setSidebar(false)}>
 					<PanelLeftCloseIcon />
 				</Button>
@@ -298,30 +600,40 @@
 				{#each space?.tabs ?? [] as t (t.id)}
 					{@const current = t.id === tab?.id}
 					{@const agent = tabAgent(t)}
-					<button
-						type="button"
-						role="tab"
-						aria-selected={current}
-						class={cn(
-							'relative flex shrink-0 items-center gap-2 px-3 text-sm text-muted-foreground transition-colors hover:text-foreground',
-							current && 'text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-sidebar-primary'
-						)}
-						onclick={() => space && selectTab(space.id, t.id)}
-					>
-						{#if agent}
-							<BotIcon class="size-4" aria-hidden="true" />
-						{:else if t.panes.length > 1}
-							<Columns2Icon class="size-4" aria-hidden="true" />
-						{:else}
-							<SquareTerminalIcon class="size-4" aria-hidden="true" />
-						{/if}
-						<span class="max-w-40 truncate" title={t.panes.length > 1 ? `${t.panes.length} panes` : undefined}>{agent ? agent.name : `Tab ${t.label}`}</span>
-						{#if agent}<StatusBadge status={agent.status} compact />{/if}
-					</button>
+					<ContextMenu.Root>
+						<ContextMenu.Trigger>
+							{#snippet child({ props })}
+								<button
+									{...props}
+									type="button"
+									role="tab"
+									aria-selected={current}
+									class={cn(
+										'relative flex shrink-0 items-center gap-2 px-3 text-sm text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:text-foreground',
+										current && 'text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-sidebar-primary'
+									)}
+									onclick={() => space && selectTab(space.id, t.id)}
+									ondblclick={() => renameTab(t)}
+									title="Double-click to rename, right-click for more"
+								>
+									{#if agent}
+										<BotIcon class="size-4" aria-hidden="true" />
+									{:else if t.panes.length > 1}
+										<Columns2Icon class="size-4" aria-hidden="true" />
+									{:else}
+										<SquareTerminalIcon class="size-4" aria-hidden="true" />
+									{/if}
+									<span class="max-w-40 truncate">{agent ? agent.name : `Tab ${t.label}`}</span>
+									{#if agent}<StatusBadge status={agent.status} compact />{/if}
+								</button>
+							{/snippet}
+						</ContextMenu.Trigger>
+						<ContextMenu.Content class="w-52">{#if space}{@render contextItems(tabActions(space, t))}{/if}</ContextMenu.Content>
+					</ContextMenu.Root>
 				{/each}
 				{#if space}
 					<div class="flex items-center">
-						<Button size="icon-sm" variant="ghost" aria-label="New tab" title="New tab" onclick={() => call('New tab', 'tab.create', { workspace_id: space.id })}>
+						<Button size="icon-sm" variant="ghost" aria-label="New tab" title="New tab ({keys('T')})" onclick={() => space && newTab(space.id)}>
 							<PlusIcon />
 						</Button>
 					</div>
@@ -363,51 +675,80 @@
 									active ? 'border-sidebar-primary/80' : 'hover:border-foreground/20'
 								)}
 							>
-								<!-- svelte-ignore a11y_no_static_element_interactions -->
-								<div
-									class="flex h-7 shrink-0 items-center gap-2 border-b border-border/60 ps-2.5 pe-1 text-xs"
-									ondblclick={() => rects.length > 1 && toggleMaximize(t.id, r.paneId)}
-								>
-									{#if pane?.agent}
-										<BotIcon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-										<span class="truncate font-medium">{pane.agent.name}</span>
-										<StatusBadge status={pane.agent.status} compact />
-									{:else}
-										<SquareTerminalIcon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-										<span class="font-medium">Shell</span>
-									{/if}
-									<span class="min-w-0 truncate font-mono text-muted-foreground" title={pane?.cwd ?? undefined}>{folder(pane?.cwd ?? null)}</span>
-									<span class="ms-auto flex shrink-0 items-center gap-0.5">
-										{#if paneMode[r.paneId] === 'watch' && mode === 'control'}
-											<span class="flex items-center gap-1 text-muted-foreground"><EyeIcon class="size-3.5" aria-hidden="true" />Watching</span>
-											<Button size="sm" variant="ghost" class="h-6 px-2 text-xs" onclick={() => setPaneMode(r.paneId, 'takeover')}>Take control</Button>
-										{/if}
-										{#if isLocked(st)}
-											<span class="text-muted-foreground">Someone else is controlling this pane</span>
-											<Button size="sm" variant="ghost" class="h-6 px-2 text-xs" onclick={() => setPaneMode(r.paneId, 'watch')}><EyeIcon data-icon="inline-start" />Watch</Button>
-											<Button size="sm" variant="ghost" class="h-6 px-2 text-xs" onclick={() => setPaneMode(r.paneId, 'takeover')}><KeyboardIcon data-icon="inline-start" />Take over</Button>
-										{:else if st?.phase === 'closed'}
-											<span class="max-w-64 truncate text-muted-foreground" title={st.reason}>{st.reason ?? 'Closed.'}</span>
-											<Button size="icon-sm" variant="ghost" class="size-6" aria-label="Reconnect" title="Reconnect" onclick={() => reconnect(r.paneId)}>
-												<RotateCwIcon />
-											</Button>
-										{:else if st?.phase === 'connecting'}
-											<span class="text-muted-foreground">Connecting…</span>
-										{/if}
-										{#if rects.length > 1}
-											<Button
-												size="icon-sm"
-												variant="ghost"
-												class={cn('size-6 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100', (active || max === r.paneId) && 'opacity-100')}
-												aria-label={max === r.paneId ? 'Restore layout' : 'Maximize pane'}
-												title={max === r.paneId ? 'Restore layout (double-click the title)' : 'Maximize (double-click the title)'}
-												onclick={() => toggleMaximize(t.id, r.paneId)}
+								<ContextMenu.Root>
+									<ContextMenu.Trigger>
+										{#snippet child({ props })}
+											<!-- svelte-ignore a11y_no_static_element_interactions -->
+											<div
+												{...props}
+												class="flex h-7 shrink-0 items-center gap-2 border-b border-border/60 ps-2.5 pe-1 text-xs"
+												ondblclick={() => rects.length > 1 && toggleMaximize(t.id, r.paneId)}
 											>
-												{#if max === r.paneId}<Minimize2Icon />{:else}<Maximize2Icon />{/if}
-											</Button>
-										{/if}
-									</span>
-								</div>
+												{#if pane?.agent}
+													<BotIcon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+													<span class="truncate font-medium">{pane.agent.name}</span>
+													<StatusBadge status={pane.agent.status} compact />
+												{:else}
+													<SquareTerminalIcon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+													<span class="font-medium">Shell</span>
+												{/if}
+												<span class="min-w-0 truncate font-mono text-muted-foreground" title={pane?.cwd ?? undefined}>{folder(pane?.cwd ?? null)}</span>
+												<span class="ms-auto flex shrink-0 items-center gap-0.5">
+													{#if paneMode[r.paneId] === 'watch' && mode === 'control'}
+														<span class="flex items-center gap-1 text-muted-foreground"><EyeIcon class="size-3.5" aria-hidden="true" />Watching</span>
+														<Button size="sm" variant="ghost" class="h-6 px-2 text-xs" onclick={() => setPaneMode(r.paneId, 'takeover')}>Take control</Button>
+													{/if}
+													{#if isLocked(st)}
+														<span class="text-muted-foreground">Someone else is controlling this pane</span>
+														<Button size="sm" variant="ghost" class="h-6 px-2 text-xs" onclick={() => setPaneMode(r.paneId, 'watch')}><EyeIcon data-icon="inline-start" />Watch</Button>
+														<Button size="sm" variant="ghost" class="h-6 px-2 text-xs" onclick={() => setPaneMode(r.paneId, 'takeover')}><KeyboardIcon data-icon="inline-start" />Take over</Button>
+													{:else if st?.phase === 'closed'}
+														<span class="max-w-64 truncate text-muted-foreground" title={st.reason}>{st.reason ?? 'Closed.'}</span>
+														<Button size="icon-sm" variant="ghost" class="size-6" aria-label="Reconnect" title="Reconnect" onclick={() => reconnect(r.paneId)}>
+															<RotateCwIcon />
+														</Button>
+													{:else if st?.phase === 'connecting'}
+														<span class="text-muted-foreground">Connecting…</span>
+													{/if}
+													<span
+														class={cn(
+															'flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 has-[[data-state=open]]:opacity-100',
+															(active || max === r.paneId) && 'opacity-100'
+														)}
+													>
+														<Button size="icon-sm" variant="ghost" class="size-6" aria-label="Split right" title="Split right ({keys('\\')})" onclick={() => splitPane(t.id, r.paneId, 'right')}>
+															<SquareSplitHorizontalIcon />
+														</Button>
+														<Button size="icon-sm" variant="ghost" class="size-6" aria-label="Split down" title="Split down ({keys('-')})" onclick={() => splitPane(t.id, r.paneId, 'down')}>
+															<SquareSplitVerticalIcon />
+														</Button>
+														{#if rects.length > 1}
+															<Button
+																size="icon-sm"
+																variant="ghost"
+																class="size-6"
+																aria-label={max === r.paneId ? 'Restore layout' : 'Maximize pane'}
+																title={max === r.paneId ? `Restore layout (${keys('Z')})` : `Maximize (${keys('Z')}, or double-click the title)`}
+																onclick={() => toggleMaximize(t.id, r.paneId)}
+															>
+																{#if max === r.paneId}<Minimize2Icon />{:else}<Maximize2Icon />{/if}
+															</Button>
+														{/if}
+														<DropdownMenu.Root>
+															<DropdownMenu.Trigger>
+																{#snippet child({ props: menuProps })}
+																	<Button {...menuProps} size="icon-sm" variant="ghost" class="size-6" aria-label="Pane actions"><EllipsisIcon /></Button>
+																{/snippet}
+															</DropdownMenu.Trigger>
+															<DropdownMenu.Content align="end" class="w-56">{@render dropdownItems(paneActions(t, r.paneId))}</DropdownMenu.Content>
+														</DropdownMenu.Root>
+													</span>
+												</span>
+											</div>
+										{/snippet}
+									</ContextMenu.Trigger>
+									<ContextMenu.Content class="w-56">{@render contextItems(paneActions(t, r.paneId))}</ContextMenu.Content>
+								</ContextMenu.Root>
 								<div class="min-h-0 flex-1">
 									{#key `${r.paneId}:${mode}:${transport}:${attempts[r.paneId] ?? 0}`}
 										<TerminalView
@@ -467,3 +808,21 @@
 		</div>
 	</div>
 </div>
+
+<FormDialog bind:open={form.open} title={form.title} description={form.description} fields={form.fields} submitLabel={form.submitLabel} onSubmit={form.onSubmit} />
+<ConfirmDialog bind:open={confirm.open} title={confirm.title} description={confirm.description} confirmLabel={confirm.confirmLabel} onConfirm={confirm.onConfirm} />
+
+<Dialog.Root bind:open={shortcutsOpen}>
+	<Dialog.Content class="sm:max-w-md">
+		<Dialog.Header>
+			<Dialog.Title>Keyboard shortcuts</Dialog.Title>
+			<Dialog.Description>These work even while you type in a terminal; every other key goes to the terminal.</Dialog.Description>
+		</Dialog.Header>
+		<dl class="grid grid-cols-[1fr_auto] items-center gap-x-6 gap-y-2 text-sm">
+			{#each shortcutList as [label, key] (label)}
+				<dt class="text-muted-foreground">{label}</dt>
+				<dd><Kbd>{keys(key)}</Kbd></dd>
+			{/each}
+		</dl>
+	</Dialog.Content>
+</Dialog.Root>

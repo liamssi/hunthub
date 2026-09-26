@@ -19,7 +19,16 @@
 		</AlertDialog.Header>
 		<AlertDialog.Footer>
 			<AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
-			<AlertDialog.Action class="bg-destructive text-white hover:bg-destructive/90" onclick={onConfirm}>{confirmLabel}</AlertDialog.Action>
+			<!-- The action button doesn't close the dialog by itself. -->
+			<AlertDialog.Action
+				class="bg-destructive text-white hover:bg-destructive/90"
+				onclick={() => {
+					open = false;
+					onConfirm();
+				}}
+			>
+				{confirmLabel}
+			</AlertDialog.Action>
 		</AlertDialog.Footer>
 	</AlertDialog.Content>
 </AlertDialog.Root>

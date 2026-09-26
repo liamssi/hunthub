@@ -3,6 +3,7 @@
 	// Herdr's own UI (as if opened in a terminal on the machine) or the web
 	// layout with our own navigation and one terminal per pane.
 	import { onMount } from 'svelte';
+	import { mode as colorMode } from 'mode-watcher';
 	import EllipsisVerticalIcon from '@lucide/svelte/icons/ellipsis-vertical';
 	import EyeIcon from '@lucide/svelte/icons/eye';
 	import FullscreenIcon from '@lucide/svelte/icons/fullscreen';
@@ -42,12 +43,17 @@
 	});
 
 	// The workspace is a dark surface; the whole page (app rail, menus) follows while it's open.
+	// mode-watcher rewrites the root classes after mounting, so dark is re-applied when removed;
+	// leaving restores whatever the user's own mode is.
 	onMount(() => {
 		const html = document.documentElement;
-		const added = !html.classList.contains('dark');
-		if (added) html.classList.add('dark');
+		const keepDark = () => !html.classList.contains('dark') && html.classList.add('dark');
+		keepDark();
+		const observer = new MutationObserver(keepDark);
+		observer.observe(html, { attributes: true, attributeFilter: ['class'] });
 		return () => {
-			if (added) html.classList.remove('dark');
+			observer.disconnect();
+			if (colorMode.current !== 'dark') html.classList.remove('dark');
 		};
 	});
 
