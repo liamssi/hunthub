@@ -83,3 +83,18 @@ Every mutation through the hub is recorded: who did it, which machine, session a
 - **Keep it simple for now:** every signed-in user (admins and members) can do everything in the console. Roles and permissions come later, once the full hub is built.
 - **Policy tiers:** not built yet. The runner allows the full console method set by default. The tier design above stays for later (M3d or the roles work).
 - **Deleting sessions from the hub:** allowed for everyone, with a confirmation dialog, following Herdr's rules (stopped only, never `default`).
+
+## Terminals as built (M3b, 2026-09-26)
+
+Both transports are behind the same `term.*` channel protocol and are chosen per terminal in the UI (the choice is remembered per browser).
+
+| | Herdr CLI (`cli`) | Native endpoint (`native`) |
+|---|---|---|
+| How | Runner spawns `herdr terminal session observe/control` | Runner speaks endpoint generation 1 on `herdr-client.sock` (Roamgate's client, vendored in `apps/runner/src/vendor/roamgate`, MIT) |
+| Frames | Herdr's own ANSI (full + diffs) | Pane cropped from the tab surface, re-encoded as full ANSI each frame |
+| Keystroke to screen (laptop test) | ~750-1000 ms | ~50 ms |
+| Control | One controller per pane; others are refused until they take over (`--takeover`) | No lock: several viewers can type at once |
+| Side effects | None while watching | Focuses the pane within its tab, even while watching |
+| Version coupling | None (same binary) | Frozen protocol, Herdr >= 0.9.0 |
+
+The hub checks the runner's `terminal:cli` / `terminal:native` capability, refuses other origins (cookies travel on cross-site WebSocket upgrades), never forwards keystrokes from a watching terminal, and audits each control session (`terminal.control`).

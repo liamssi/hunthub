@@ -100,7 +100,7 @@ export function runConnection({ hubUrl, log, ...opts }: Options): Promise<void> 
 					type: 'hello',
 					protocol: RUNNER_PROTOCOL_VERSION,
 					runnerVersion,
-					capabilities: ['stats', 'herdr', 'terminal:cli'],
+					capabilities: ['stats', 'herdr', 'terminal:cli', 'terminal:native'],
 					host
 				});
 			};

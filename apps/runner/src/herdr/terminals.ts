@@ -1,14 +1,20 @@
 // Live terminals relayed to the hub. Each channel streams one pane as ANSI
-// frames. The "cli" transport runs this machine's own
-// `herdr terminal session observe|control` (always the matching Herdr version)
-// and speaks its NDJSON over stdio.
+// frames, through one of two transports (selectable, to compare them):
+// - "cli" runs this machine's own `herdr terminal session observe|control`
+//   (always the matching Herdr version) and speaks its NDJSON over stdio.
+// - "native" speaks Herdr's endpoint protocol on herdr-client.sock through
+//   Roamgate's client (src/vendor/roamgate): it focuses the pane in its own
+//   shell connection, crops the pane out of the tab surface and re-encodes it
+//   as ANSI. Watching still focuses the pane within its tab.
+import { dirname, join } from 'node:path';
 import {
 	RUNNER_MAX_MESSAGE_BYTES,
 	type RunnerMessage,
 	type ServerMessage,
 	type TerminalFrame
 } from '@hunthub/shared/runner-protocol';
-import { DEFAULT_SESSION } from './client';
+import { EndpointTerminalSession } from '../vendor/roamgate/endpoint-terminal-session';
+import { DEFAULT_SESSION, socketPathFor } from './client';
 
 type Open = Extract<ServerMessage, { type: 'term.open' }>;
 type Send = (message: RunnerMessage) => boolean | void;
@@ -38,8 +44,7 @@ export class TerminalManager {
 		if (this.channels.size >= MAX_TERMINALS) return fail('Too many open terminals on this machine.');
 		if (!this.sessionExists(msg.session)) return fail(`No Herdr session named ${msg.session}.`);
 		if (!TARGET.test(msg.target)) return fail('Invalid pane.');
-		if (msg.transport === 'native') return fail('The native transport is not available yet.');
-		this.channels.set(msg.channel, this.openCli(msg));
+		this.channels.set(msg.channel, msg.transport === 'native' ? this.openNative(msg) : this.openCli(msg));
 	}
 
 	input(channel: string, bytes: string) {
@@ -60,6 +65,57 @@ export class TerminalManager {
 
 	closeAll() {
 		for (const c of this.channels.values()) c.close();
+	}
+
+	private openNative(msg: Open): Channel {
+		const socket = join(dirname(socketPathFor(msg.session)), 'herdr-client.sock');
+		// Our targets are pane ids already; the endpoint session resolves them to themselves.
+		const session = new EndpointTerminalSession(socket, msg.target, async (id) => id);
+		let ended = false;
+		const end = (reason: string) => {
+			if (ended) return;
+			ended = true;
+			session.close();
+			this.channels.delete(msg.channel);
+			this.send({ type: 'term.closed', channel: msg.channel, reason });
+		};
+
+		session.on('terminal', (f: { seq: number; width: number; height: number; bytes: Buffer }) => {
+			if (ended) return;
+			const bytes = f.bytes.toString('base64');
+			if (bytes.length > RUNNER_MAX_MESSAGE_BYTES - 1024) return end('The terminal is too large to stream; make it smaller.');
+			this.send({ type: 'term.frame', channel: msg.channel, frame: { seq: f.seq, full: true, width: f.width, height: f.height, bytes } });
+		});
+		session.on('error', (e: Error) => end(`Terminal error: ${e.message}`));
+		session.on('close', () => end('Terminal ended.'));
+		// Frames can arrive before the connection settles; hold input until then.
+		let pending: object[] | null = [];
+		session
+			.connect(msg.cols, msg.rows)
+			.then(() => {
+				const queued = pending ?? [];
+				pending = null;
+				for (const line of queued) write(line);
+			})
+			.catch((e: Error) => end(`Couldn't open the pane: ${e.message}`));
+
+		const write = (line: object) => {
+			if (ended) return;
+			if (pending) {
+				if (pending.length < 1000) pending.push(line);
+				return;
+			}
+			const m = line as { type: string; bytes?: string; cols?: number; rows?: number; direction?: 'up' | 'down'; lines?: number };
+			try {
+				if (m.type === 'terminal.input' && msg.mode === 'control' && m.bytes) session.input(Buffer.from(m.bytes, 'base64'));
+				else if (m.type === 'terminal.resize' && m.cols && m.rows) session.resize(m.cols, m.rows);
+				else if (m.type === 'terminal.scroll' && m.direction && m.lines) session.scroll(m.direction, m.lines, null, null, 'page-key');
+			} catch (e) {
+				this.log(`terminal ${msg.channel}: ${e instanceof Error ? e.message : e}`);
+			}
+		};
+
+		return { write, close: () => end('Closed.') };
 	}
 
 	private openCli(msg: Open): Channel {
