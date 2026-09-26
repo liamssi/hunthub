@@ -11,6 +11,7 @@ import { liveRoutes } from './live/routes';
 import { machineRoutes, settingsRoutes } from './machines/routes';
 import { installRoutes } from './runner/install';
 import { runnerRoutes } from './runner/routes';
+import { herdrRoutes, pinRoutes } from './workspace/routes';
 
 export const app = new Hono().basePath('/api');
 
@@ -21,6 +22,8 @@ app.on(['GET', 'POST'], '/auth/*', (c) => auth.handler(c.req.raw));
 app.route('/machines', machineRoutes);
 app.route('/machines', consoleRoutes);
 app.route('/agents', agentRoutes);
+app.route('/herdr', herdrRoutes);
+app.route('/pins', pinRoutes);
 app.route('/settings', settingsRoutes);
 app.route('/runner', runnerRoutes);
 app.route('/', installRoutes);

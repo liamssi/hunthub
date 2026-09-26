@@ -156,3 +156,6 @@ export type LiveServerMessage =
 	| { type: 'enroll.completed'; tokenId: string; machineId: string }
 	| { type: 'machine.herdr'; machineId: string; herdr: MachineHerdrView }
 	| { type: 'error'; message: string };
+
+/** A session (paneId null) or terminal a user pinned to their sidebar. */
+export type Pin = { id: number; machineId: string; session: string; paneId: string | null; label: string; createdAt: string };

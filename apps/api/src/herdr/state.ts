@@ -59,6 +59,11 @@ export function machineHerdr(machineId: string): MachineHerdrView {
 	};
 }
 
+/** Every connected machine's Herdr view, by machine id. */
+export function allHerdr(): Record<string, MachineHerdrView> {
+	return Object.fromEntries([...machines.keys()].map((id) => [id, machineHerdr(id)]));
+}
+
 function agentsOf(m: MachineState): AgentView[] {
 	return [...m.sessions.values()].flatMap((s) => s.workspaces.flatMap((w) => w.agents));
 }

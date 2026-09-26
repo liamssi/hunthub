@@ -455,6 +455,37 @@ describe('live terminals', () => {
 	});
 });
 
+describe('pins and all-machine Herdr state', () => {
+	test('pins sessions and terminals per user; pinning twice returns the same pin', async () => {
+		const { machineId } = await enrolledMachine();
+		const pin = (body: object) => api('/pins', { method: 'POST', body: JSON.stringify(body) });
+
+		const first = await pin({ machineId, session: 'acme-1', label: 'acme-1' });
+		expect(first.status).toBe(201);
+		const again = await pin({ machineId, session: 'acme-1', label: 'acme-1' });
+		expect(again.status).toBe(200);
+		expect((await again.json()).pin.id).toBe((await first.json()).pin.id);
+		expect((await pin({ machineId, session: 'acme-1', paneId: 'w1:p2', label: 'claude' })).status).toBe(201);
+
+		const mine = (await (await api('/pins')).json()).pins.filter((p: { machineId: string }) => p.machineId === machineId);
+		expect(mine.map((p: { paneId: string | null }) => p.paneId)).toEqual([null, 'w1:p2']);
+
+		expect((await pin({ machineId, session: '../x', label: 'x' })).status).toBe(400);
+		expect((await pin({ machineId, session: 'acme-1', paneId: 'w1 p2', label: 'x' })).status).toBe(400);
+		expect((await pin({ machineId: '00000000-0000-4000-8000-000000000000', session: 'acme-1', label: 'x' })).status).toBe(404);
+
+		expect((await api(`/pins/${mine[0].id}`, { method: 'DELETE' })).status).toBe(200);
+		expect((await api(`/pins/${mine[0].id}`, { method: 'DELETE' })).status).toBe(404);
+	});
+
+	test('all machines\' Herdr state in one response', async () => {
+		const res = await api('/herdr');
+		expect(res.status).toBe(200);
+		expect(typeof (await res.json()).machines).toBe('object');
+		expect((await fetch(`${base}/api/herdr`)).status).toBe(401);
+	});
+});
+
 describe('settings', () => {
 	test('an offline threshold below 3 heartbeats is rejected', async () => {
 		const res = await api('/settings/machines/connection', {
