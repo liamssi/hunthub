@@ -14,7 +14,8 @@ export const READ_METHODS = [
 	'agent.get',
 	'agent.read',
 	'agent.explain',
-	'worktree.list'
+	'worktree.list',
+	'integration.list'
 ] as const;
 
 /** Herdr methods that change a session's layout. */
@@ -65,13 +66,21 @@ export const AGENT_STOP = 'hunthub.agent.stop';
 export const AGENT_KINDS_INSTALLED = 'hunthub.agent.kinds';
 export const RUNNER_AGENT_METHODS = [AGENT_LAUNCH, AGENT_STOP, AGENT_KINDS_INSTALLED] as const;
 
+/**
+ * Herdr's agent integrations: status hooks it adds to an agent's own settings
+ * on the machine (per user, not per session), so it knows exactly when the
+ * agent works, waits or finishes.
+ */
+export const INTEGRATION_METHODS = ['integration.install', 'integration.uninstall'] as const;
+
 export type ConsoleMethod =
 	| (typeof READ_METHODS)[number]
 	| (typeof MANAGE_METHODS)[number]
 	| (typeof LIFECYCLE_METHODS)[number]
 	| (typeof FILE_METHODS)[number]
 	| (typeof AGENT_METHODS)[number]
-	| (typeof RUNNER_AGENT_METHODS)[number];
+	| (typeof RUNNER_AGENT_METHODS)[number]
+	| (typeof INTEGRATION_METHODS)[number];
 
 /** Everything the console may do. For now every user may do everything; tiers come later. */
 export const CONSOLE_METHODS: ReadonlySet<string> = new Set([
@@ -80,7 +89,8 @@ export const CONSOLE_METHODS: ReadonlySet<string> = new Set([
 	...LIFECYCLE_METHODS,
 	...FILE_METHODS,
 	...AGENT_METHODS,
-	...RUNNER_AGENT_METHODS
+	...RUNNER_AGENT_METHODS,
+	...INTEGRATION_METHODS
 ]);
 
 /** Methods that change something; these are serialized per session and audited. */
@@ -89,7 +99,8 @@ export const MUTATING_METHODS: ReadonlySet<string> = new Set([
 	...LIFECYCLE_METHODS,
 	...AGENT_METHODS,
 	AGENT_LAUNCH,
-	AGENT_STOP
+	AGENT_STOP,
+	...INTEGRATION_METHODS
 ]);
 
 /**

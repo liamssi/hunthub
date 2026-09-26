@@ -8,6 +8,7 @@
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import MachineActions from '$lib/components/machines/machine-actions.svelte';
+	import IntegrationsCard from '$lib/components/machines/integrations-card.svelte';
 	import StatsCharts from '$lib/components/machines/stats-charts.svelte';
 	import StatusDot from '$lib/components/machines/status-dot.svelte';
 	import UsageBar from '$lib/components/machines/usage-bar.svelte';
@@ -86,6 +87,8 @@
 <SessionsCard {machine} {herdr} />
 
 <StatsCharts machineId={machine.id} initial={data.series} />
+
+{#if herdr.supported}<IntegrationsCard {machine} {online} />{/if}
 
 <Card.Root class="mt-6">
 	<Card.Header><Card.Title>System</Card.Title></Card.Header>

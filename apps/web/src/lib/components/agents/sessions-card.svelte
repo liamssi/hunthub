@@ -79,7 +79,13 @@
 									<span class="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground" title={agent.cwd ?? undefined}>
 										{agent.cwd ?? ''}
 									</span>
-									<Badge variant="outline" title="Started outside HuntHub">external</Badge>
+									{#if agent.run}
+										<Badge variant="secondary" title="{agent.run.adopted ? 'Adopted' : 'Started'} in HuntHub {new Date(agent.run.at).toLocaleString()}">
+											{agent.run.adopted ? 'adopted' : 'started'} by {agent.run.by ?? 'someone'}
+										</Badge>
+									{:else}
+										<Badge variant="outline" title="Started outside HuntHub (by hand, Hermes, …)">external</Badge>
+									{/if}
 									<Button size="icon-sm" variant="ghost" aria-label="Peek at {agent.name}'s output" onclick={() => (peek = agent)}>
 										<EyeIcon />
 									</Button>

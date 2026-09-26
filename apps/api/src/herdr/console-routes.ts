@@ -24,7 +24,7 @@ import { type AuthVariables, requireUser } from '../lib/auth-guard';
 import { hasCapability } from '../machines/registry';
 import { endRun, recordRun } from './agent-runs';
 import { callHerdr, HerdrCallError } from './calls';
-import { findAgent, refreshMachine } from './state';
+import { findAgent, machineHerdr, refreshMachine } from './state';
 import { closeTerminal, openTerminal, terminalFromBrowser } from './terminals';
 
 const SECRET_KEY = /token|secret|password|passwd|key|credential|auth|cookie|env/i;
@@ -130,6 +130,12 @@ const terminalQuery = z.object({
 
 const sessionParam = (c: { req: { param: (k: string) => string } }) => decodeURIComponent(c.req.param('session'));
 
+/** A running session to reach Herdr's machine-wide features through (the default one first). */
+function integrationSession(machineId: string): string | null {
+	const running = machineHerdr(machineId).sessions.filter((s) => s.state === 'running');
+	return (running.find((s) => s.name === 'default') ?? running[0])?.name ?? null;
+}
+
 const launchBody = z.object({
 	kind: z.enum(AGENT_KINDS.map((k) => k.kind) as [string, ...string[]]),
 	name: z.string().max(32).optional(),
@@ -219,6 +225,30 @@ export const consoleRoutes = new Hono<{ Variables: AuthVariables }>()
 		await recordRun({ id: crypto.randomUUID(), machineId, session, name, kind: agent.kind, adopted: true, userId: user.id, userName: user.name });
 		refreshMachine(machineId);
 		return c.json({ result: { name } });
+	})
+	// Herdr's agent integrations on a machine. They belong to the machine's user,
+	// not a session, but Herdr answers through a session: any running one does.
+	.get('/:id/integrations', async (c) => {
+		const machineId = c.req.param('id');
+		const session = integrationSession(machineId);
+		if (!session) return c.json({ error: 'no_session', message: 'Start a Herdr session on this machine to see its integrations.' }, 409);
+		try {
+			const result = await callHerdr<{ integrations?: unknown[] }>(machineId, session, 'integration.list', {}, 15_000);
+			return c.json({ session, integrations: result?.integrations ?? [] });
+		} catch (err) {
+			if (!(err instanceof HerdrCallError)) throw err;
+			return c.json({ error: err.code, message: err.message }, err.code === 'offline' ? 409 : 400);
+		}
+	})
+	.post('/:id/integrations/:target', async (c) => {
+		const body = z.object({ action: z.enum(['install', 'uninstall']) }).safeParse(await c.req.json().catch(() => null));
+		const target = c.req.param('target');
+		if (!body.success || !/^[a-z_]{1,32}$/.test(target)) return c.json({ error: 'invalid_body' }, 400);
+		const machineId = c.req.param('id');
+		const session = integrationSession(machineId);
+		if (!session) return c.json({ error: 'no_session', message: 'Start a Herdr session on this machine first.' }, 409);
+		const out = await runConsoleCall(c.get('user').id, machineId, session, `integration.${body.data.action}`, { target });
+		return c.json(out.body, out.status);
 	})
 	// Any other console action inside a session (workspaces, tabs, panes, worktrees, agents).
 	.post('/:id/sessions/:session/call', async (c) => {
