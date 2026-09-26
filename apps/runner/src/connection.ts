@@ -98,7 +98,7 @@ export function runConnection({ hubUrl, log, ...opts }: Options): Promise<void> 
 					type: 'hello',
 					protocol: RUNNER_PROTOCOL_VERSION,
 					runnerVersion,
-					capabilities: ['stats'],
+					capabilities: ['stats', 'herdr'],
 					host
 				});
 			};

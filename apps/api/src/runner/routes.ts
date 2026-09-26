@@ -20,6 +20,8 @@ import { generateSecret, hashSecret } from '../lib/secrets';
 import { serverVersion } from '../lib/version';
 import { publish } from '../live/hub';
 import { connectionSettings } from '../machines/connection-settings';
+import { resolveCall } from '../herdr/calls';
+import * as herdrState from '../herdr/state';
 import * as registry from '../machines/registry';
 import { toMachineDto } from '../machines/routes';
 
@@ -130,7 +132,12 @@ export const runnerRoutes = new Hono<{ Variables: RunnerVariables }>()
 							return;
 						}
 						helloDone = true;
-						await registry.connect(machineId, ws, { host: msg.host, runnerVersion: msg.runnerVersion, publicIp });
+						await registry.connect(machineId, ws, {
+							host: msg.host,
+							runnerVersion: msg.runnerVersion,
+							publicIp,
+							capabilities: msg.capabilities
+						});
 						send(ws, {
 							type: 'welcome',
 							machineId,
@@ -148,6 +155,15 @@ export const runnerRoutes = new Hono<{ Variables: RunnerVariables }>()
 							break;
 						case 'host.changed':
 							await registry.handleHostChanged(machineId, msg.host);
+							break;
+						case 'herdr.session':
+							herdrState.applySession(machineId, msg.session);
+							break;
+						case 'herdr.session.removed':
+							herdrState.removeSession(machineId, msg.name);
+							break;
+						case 'herdr.result':
+							resolveCall(machineId, msg);
 							break;
 						case 'credential.rotated':
 							await registry.completeRotation(machineId);

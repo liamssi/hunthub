@@ -5,6 +5,7 @@ import { secureHeaders } from 'hono/secure-headers';
 import { sql } from 'drizzle-orm';
 import { auth } from './auth';
 import { db } from './db';
+import { agentRoutes } from './herdr/routes';
 import { liveRoutes } from './live/routes';
 import { machineRoutes, settingsRoutes } from './machines/routes';
 import { installRoutes } from './runner/install';
@@ -17,6 +18,7 @@ app.use(bodyLimit({ maxSize: 1024 * 1024, onError: (c) => c.json({ error: 'paylo
 
 app.on(['GET', 'POST'], '/auth/*', (c) => auth.handler(c.req.raw));
 app.route('/machines', machineRoutes);
+app.route('/agents', agentRoutes);
 app.route('/settings', settingsRoutes);
 app.route('/runner', runnerRoutes);
 app.route('/', installRoutes);

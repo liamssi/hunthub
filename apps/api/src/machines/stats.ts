@@ -19,16 +19,18 @@ type Bucket = {
 	rxSum: number;
 	txSum: number;
 	disks: DiskStat[];
+	/** Most agents seen in the bucket; null when the runner doesn't report Herdr. */
+	agents: number | null;
 };
 
 const buckets = new Map<string, Bucket>();
 
 function emptyBucket(bucket: number): Bucket {
-	return { bucket, samples: 0, cpuSum: 0, cpuMax: 0, memSum: 0, memMax: 0, memTotal: 0, rxSum: 0, txSum: 0, disks: [] };
+	return { bucket, samples: 0, cpuSum: 0, cpuMax: 0, memSum: 0, memMax: 0, memTotal: 0, rxSum: 0, txSum: 0, disks: [], agents: null };
 }
 
 /** Adds a live sample; a sample from a newer minute flushes the previous bucket. */
-export function recordSample(machineId: string, sample: StatsSample) {
+export function recordSample(machineId: string, sample: StatsSample, agents: number | null = null) {
 	const minute = Math.floor(sample.ts / MINUTE_MS) * MINUTE_MS;
 	let b = buckets.get(machineId);
 	if (b && b.bucket !== minute) {
@@ -45,6 +47,7 @@ export function recordSample(machineId: string, sample: StatsSample) {
 	b.rxSum += sample.net.rxBps;
 	b.txSum += sample.net.txBps;
 	b.disks = sample.disks;
+	if (agents !== null) b.agents = Math.max(b.agents ?? 0, agents);
 	buckets.set(machineId, b);
 }
 
@@ -61,7 +64,8 @@ async function writeBucket(machineId: string, b: Bucket) {
 		memTotal: b.memTotal,
 		rxBps: b.rxSum / b.samples,
 		txBps: b.txSum / b.samples,
-		disks: b.disks
+		disks: b.disks,
+		agents: b.agents
 	};
 	try {
 		await db

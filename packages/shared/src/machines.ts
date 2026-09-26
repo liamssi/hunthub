@@ -19,6 +19,47 @@ export type Machine = {
 	createdAt: string;
 	/** Latest live sample while online. */
 	stats: StatsSample | null;
+	/** Agents in Herdr right now; null when unknown (offline or no Herdr reporting). */
+	agents: number | null;
+};
+
+// Herdr sessions and agents, as the hub interprets the runner's reports.
+
+export type AgentStatus = 'working' | 'blocked' | 'done' | 'idle' | 'unknown';
+
+export type AgentView = {
+	machineId: string;
+	machineName: string;
+	session: string;
+	workspaceId: string;
+	workspaceLabel: string;
+	paneId: string;
+	/** Herdr's agent name (e.g. "claude", or a custom label). */
+	name: string;
+	status: AgentStatus;
+	cwd: string | null;
+	/** Started outside HuntHub (all agents are, until M3). */
+	origin: 'external';
+};
+
+export type WorkspaceView = {
+	id: string;
+	label: string;
+	status: AgentStatus;
+	paneCount: number;
+	agents: AgentView[];
+};
+
+export type SessionView = {
+	name: string;
+	state: 'running' | 'stopped';
+	workspaces: WorkspaceView[];
+};
+
+export type MachineHerdrView = {
+	/** Runner reports Herdr; false for runners that predate M2. */
+	supported: boolean;
+	sessions: SessionView[];
 };
 
 export type StatsRange = '1h' | '24h' | '7d' | '30d' | '1y';
@@ -65,7 +106,7 @@ export type JoinTokenCreated = {
 };
 
 // Browser live channel (/api/live)
-export type LiveTopic = 'machines' | `machine:${string}`;
+export type LiveTopic = 'machines' | 'agents' | `machine:${string}`;
 
 export type LiveClientMessage =
 	| { type: 'subscribe'; topic: LiveTopic }
@@ -77,4 +118,5 @@ export type LiveServerMessage =
 	| { type: 'machine.connection'; machineId: string; connection: MachineConnection; lastSeenAt: string | null }
 	| { type: 'machine.stats'; machineId: string; sample: StatsSample }
 	| { type: 'enroll.completed'; tokenId: string; machineId: string }
+	| { type: 'machine.herdr'; machineId: string; herdr: MachineHerdrView }
 	| { type: 'error'; message: string };

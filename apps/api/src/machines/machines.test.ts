@@ -46,7 +46,8 @@ beforeAll(async () => {
 afterAll(async () => {
 	stopOfflineSweep();
 	setConnectionSettingsInMemory(savedSettings);
-	if (createdMachines.length) await db.delete(machine).where(inArray(machine.id, createdMachines));
+	const ids = createdMachines.filter(Boolean);
+	if (ids.length) await db.delete(machine).where(inArray(machine.id, ids));
 	await db.delete(user).where(eq(user.email, email));
 	server.stop(true);
 });
@@ -63,10 +64,13 @@ async function createToken(name = 'test-machine') {
 	return (await res.json()) as { token: string; tokenId: string; installCommand: string };
 }
 
+let enrollCount = 0;
+
 function enroll(token: string) {
 	return fetch(`${base}/api/runner/enroll`, {
 		method: 'POST',
-		headers: { 'content-type': 'application/json' },
+		// A distinct client address per call keeps the suite under the per-IP enroll rate limit.
+		headers: { 'content-type': 'application/json', 'x-forwarded-for': `10.99.0.${++enrollCount}` },
 		body: JSON.stringify({ token, runnerVersion: 'test', host })
 	});
 }
@@ -211,6 +215,74 @@ describe('runner websocket', () => {
 		await waitFor(() => withNew.messages.length > 0);
 		expect(withNew.messages[0].type).toBe('welcome');
 		withNew.ws.close();
+	});
+});
+
+describe('herdr reports', () => {
+	const snapshot = {
+		workspaces: [{ workspace_id: 'w1', label: 'ws-one', agent_status: 'blocked', pane_count: 1 }],
+		agents: [{ pane_id: 'w1:p1', workspace_id: 'w1', agent: 'claude', agent_status: 'blocked', cwd: '/srv/app' }]
+	};
+
+	function connectHerdrRunner(credential: string): Conn {
+		const ws = new WebSocket(`${base.replace('http', 'ws')}/api/runner/ws`, {
+			headers: { authorization: `Bearer ${credential}` }
+		});
+		const messages: any[] = [];
+		const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+			ws.onclose = (e) => resolve({ code: e.code, reason: e.reason });
+		});
+		ws.onopen = () =>
+			ws.send(JSON.stringify({ type: 'hello', protocol: RUNNER_PROTOCOL_VERSION, runnerVersion: 'test', capabilities: ['herdr'], host }));
+		ws.onmessage = (e) => messages.push(JSON.parse(String(e.data)));
+		return { ws, messages, closed };
+	}
+
+	test('session reports become agents, counts and a machine view', async () => {
+		const { credential, machineId } = await enrolledMachine();
+		const conn = connectHerdrRunner(credential);
+		await waitFor(() => conn.messages.length > 0);
+		conn.ws.send(JSON.stringify({ type: 'herdr.session', session: { name: 'main', state: 'running', snapshot } }));
+		await Bun.sleep(100);
+
+		const agents = (await (await api('/agents')).json()) as { agents: { machineId: string; name: string; status: string }[] };
+		expect(agents.agents.filter((a) => a.machineId === machineId)).toEqual([
+			expect.objectContaining({ name: 'claude', status: 'blocked', session: 'main', workspaceLabel: 'ws-one', cwd: '/srv/app' })
+		]);
+		const view = (await (await api(`/machines/${machineId}/herdr`)).json()) as { supported: boolean; sessions: { name: string }[] };
+		expect(view.supported).toBe(true);
+		expect(view.sessions.map((s) => s.name)).toEqual(['main']);
+		const list = (await (await api('/machines')).json()) as { machines: { id: string; agents: number | null }[] };
+		expect(list.machines.find((m) => m.id === machineId)?.agents).toBe(1);
+
+		// Removing the session removes its agents; disconnecting clears the machine.
+		conn.ws.send(JSON.stringify({ type: 'herdr.session.removed', name: 'main' }));
+		await Bun.sleep(100);
+		const after = (await (await api('/agents')).json()) as { agents: { machineId: string }[] };
+		expect(after.agents.some((a) => a.machineId === machineId)).toBe(false);
+		conn.ws.close();
+	});
+
+	test('pane output is fetched through the runner', async () => {
+		const { credential, machineId } = await enrolledMachine();
+		const conn = connectHerdrRunner(credential);
+		await waitFor(() => conn.messages.length > 0);
+		// Answer the hub's herdr.call like a runner would.
+		conn.ws.onmessage = (e) => {
+			const msg = JSON.parse(String(e.data));
+			if (msg.type !== 'herdr.call') return;
+			expect(msg).toMatchObject({ session: 'main', method: 'pane.read', params: { pane_id: 'w1:p1' } });
+			conn.ws.send(JSON.stringify({ type: 'herdr.result', id: msg.id, ok: true, result: { type: 'pane_read', text: 'hello from the pane' } }));
+		};
+		const res = await api(`/machines/${machineId}/sessions/main/panes/w1:p1/output?lines=10`);
+		expect(await res.json()).toEqual({ text: 'hello from the pane' });
+		conn.ws.close();
+	});
+
+	test('pane output from an offline machine fails cleanly', async () => {
+		const { machineId } = await enrolledMachine();
+		const res = await api(`/machines/${machineId}/sessions/main/panes/w1:p1/output`);
+		expect(res.status).toBe(409);
 	});
 });
 

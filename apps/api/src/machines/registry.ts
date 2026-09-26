@@ -8,6 +8,8 @@ import { RUNNER_CLOSE } from '@hunthub/shared/runner-protocol';
 import { db } from '../db';
 import { machine } from '../db/schema';
 import { publish } from '../live/hub';
+import { failCallsFor } from '../herdr/calls';
+import * as herdrState from '../herdr/state';
 import { connectionSettings } from './connection-settings';
 import { forgetMachine, recordSample } from './stats';
 
@@ -52,7 +54,7 @@ async function touchLastSeen(machineId: string, extra: Partial<typeof machine.$i
 export async function connect(
 	machineId: string,
 	ws: WSContext,
-	info: { host: HostInfo; runnerVersion: string; publicIp: string | null }
+	info: { host: HostInfo; runnerVersion: string; publicIp: string | null; capabilities: string[] }
 ) {
 	const previous = connections.get(machineId);
 	if (previous) previous.ws.close(RUNNER_CLOSE.replaced, 'replaced by a newer connection');
@@ -63,6 +65,8 @@ export async function connect(
 		runnerVersion: info.runnerVersion,
 		publicIp: info.publicIp
 	});
+	const [row] = await db.select({ name: machine.name }).from(machine).where(eq(machine.id, machineId));
+	herdrState.trackMachine(machineId, row?.name ?? 'machine', info.capabilities.includes('herdr'));
 	publish([...topics(machineId)], {
 		type: 'machine.connection',
 		machineId,
@@ -77,6 +81,8 @@ export async function disconnect(machineId: string, ws: WSContext) {
 	if (!current || current.ws !== ws) return;
 	connections.delete(machineId);
 	forgetMachine(machineId);
+	herdrState.forgetMachine(machineId);
+	failCallsFor(machineId);
 	const lastSeenAt = await touchLastSeen(machineId);
 	publish([...topics(machineId)], {
 		type: 'machine.connection',
@@ -95,12 +101,20 @@ export function handleStats(machineId: string, sample: StatsSample) {
 	const c = connections.get(machineId);
 	if (!c) return;
 	c.stats = sample;
-	recordSample(machineId, sample);
+	recordSample(machineId, sample, herdrState.agentCount(machineId));
 	publish([...topics(machineId)], { type: 'machine.stats', machineId, sample });
 }
 
 export async function handleHostChanged(machineId: string, host: HostInfo) {
 	await db.update(machine).set({ host }).where(eq(machine.id, machineId));
+}
+
+/** Sends a message to a connected runner; false if the machine is offline. */
+export function sendToMachine(machineId: string, message: ServerMessage): boolean {
+	const c = connections.get(machineId);
+	if (!c || c.ws.readyState !== 1) return false;
+	sendTo(c.ws, message);
+	return true;
 }
 
 /** Closes a machine's connection, e.g. when it is disabled or removed. */

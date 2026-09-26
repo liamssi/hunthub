@@ -25,7 +25,7 @@ export function removeClient(client: Client) {
 
 /** Machine topics are visible to every signed-in user (members can view machines). */
 function canSubscribe(_client: Client, topic: string): topic is LiveTopic {
-	return topic === 'machines' || /^machine:[0-9a-f-]{36}$/.test(topic);
+	return topic === 'machines' || topic === 'agents' || /^machine:[0-9a-f-]{36}$/.test(topic);
 }
 
 export function subscribe(client: Client, topic: string): boolean {

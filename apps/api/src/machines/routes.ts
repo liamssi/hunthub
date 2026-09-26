@@ -8,6 +8,8 @@ import { machine, machineJoinToken } from '../db/schema';
 import { type AuthVariables, requireAdmin, requireUser } from '../lib/auth-guard';
 import { generateSecret, hashSecret } from '../lib/secrets';
 import { publish } from '../live/hub';
+import { callHerdr, HerdrCallError } from '../herdr/calls';
+import { agentCount, machineHerdr, renameMachine } from '../herdr/state';
 import { connectionSettings, connectionSettingsSchema, saveConnectionSettings } from './connection-settings';
 import { broadcastSettings, isOnline, kick, latestStats, startRotation } from './registry';
 import { getRetention, querySeries, setRetention } from './stats';
@@ -29,7 +31,8 @@ export function toMachineDto(row: typeof machine.$inferSelect): Machine {
 		publicIp: row.publicIp,
 		lastSeenAt: row.lastSeenAt?.toISOString() ?? null,
 		createdAt: row.createdAt.toISOString(),
-		stats: latestStats(row.id)
+		stats: latestStats(row.id),
+		agents: agentCount(row.id)
 	};
 }
 
@@ -60,6 +63,31 @@ export const machineRoutes = new Hono<{ Variables: AuthVariables }>()
 		const row = await findMachine(c.req.param('id'));
 		if (!row) return c.json({ error: 'not_found' }, 404);
 		return c.json({ machine: toMachineDto(row) });
+	})
+	.get('/:id/herdr', async (c) => {
+		const row = await findMachine(c.req.param('id'));
+		if (!row) return c.json({ error: 'not_found' }, 404);
+		return c.json(machineHerdr(row.id));
+	})
+	// Recent output of a pane (read-only), fetched live from the machine.
+	.get('/:id/sessions/:session/panes/:pane/output', async (c) => {
+		const row = await findMachine(c.req.param('id'));
+		if (!row) return c.json({ error: 'not_found' }, 404);
+		const lines = Math.min(Math.max(Number(c.req.query('lines') ?? 80) || 80, 1), 500);
+		try {
+			const result = await callHerdr<{ text?: string; read?: { text?: string } }>(row.id, c.req.param('session'), 'pane.read', {
+				pane_id: c.req.param('pane'),
+				source: 'recent_unwrapped',
+				lines
+			});
+			return c.json({ text: result.text ?? result.read?.text ?? '' });
+		} catch (err) {
+			if (err instanceof HerdrCallError) {
+				const status = err.code === 'offline' ? 409 : err.code === 'timeout' ? 504 : 400;
+				return c.json({ error: err.code, message: err.message }, status);
+			}
+			throw err;
+		}
 	})
 	.get('/:id/stats', async (c) => {
 		const range = z.enum(['1h', '24h', '7d', '30d', '1y']).safeParse(c.req.query('range') ?? '1h');
@@ -95,6 +123,7 @@ export const machineRoutes = new Hono<{ Variables: AuthVariables }>()
 		const existing = await findMachine(c.req.param('id'));
 		if (!existing) return c.json({ error: 'not_found' }, 404);
 		const [row] = await db.update(machine).set(body.data).where(eq(machine.id, existing.id)).returning();
+		if (body.data.name) renameMachine(row!.id, row!.name);
 		broadcastUpdated(row!);
 		return c.json({ machine: toMachineDto(row!) });
 	})
