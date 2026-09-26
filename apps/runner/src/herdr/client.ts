@@ -134,15 +134,21 @@ export type HerdrEvent = { event: string; data: unknown };
  * Subscribes to events. `onReady` fires once Herdr acknowledges; `onEnd` fires
  * when the stream ends for any reason. Returns a function that unsubscribes.
  */
+export type Subscription = string | ({ type: string } & Record<string, unknown>);
+
 export async function subscribe(
 	socketPath: string,
-	types: string[],
+	subscriptions: Subscription[],
 	handlers: { onReady: () => void; onEvent: (event: HerdrEvent) => void; onEnd: (error?: Error) => void }
 ): Promise<() => void> {
 	let ready = false;
 	const conn = await openLines(
 		socketPath,
-		JSON.stringify({ id: nextId(), method: 'events.subscribe', params: { subscriptions: types.map((type) => ({ type })) } }),
+		JSON.stringify({
+			id: nextId(),
+			method: 'events.subscribe',
+			params: { subscriptions: subscriptions.map((s) => (typeof s === 'string' ? { type: s } : s)) }
+		}),
 		{
 			onLine(line) {
 				let message: { result?: { type?: string }; error?: { message: string }; event?: string; data?: unknown };

@@ -5,7 +5,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { RunnerMessage } from '@hunthub/shared/runner-protocol';
 import { request, socketPathFor } from './client';
-import { HerdrGateway, meaningfulJson } from './gateway';
+import { agentPaneIds, HerdrGateway, meaningfulJson } from './gateway';
 
 const SESSION = 'hunthub-gateway-test';
 const herdrAvailable = Bun.spawnSync(['herdr', '--version']).success;
@@ -62,10 +62,19 @@ describe.skipIf(!herdrAvailable)('herdr gateway', () => {
 			);
 			const paneId = (withWorkspace.session.snapshot as { panes: { pane_id: string }[] }).panes[0]!.pane_id;
 
-			// An agent state change shows up (no event for it; found by the poll).
+			// A pane becoming an agent shows up.
 			herdr('pane', 'report-agent', '--source', 'custom:hunthub-test', '--agent', 'test-bot', '--state', 'blocked', paneId);
 			await waitFor(() =>
 				sessionReports().some((m) => JSON.stringify(m.session.snapshot).includes('"agent_status":"blocked"'))
+			);
+
+			// An existing agent's status change arrives through the per-pane
+			// subscription, well before the 30s reconcile.
+			await Bun.sleep(300);
+			herdr('pane', 'report-agent', '--source', 'custom:hunthub-test', '--agent', 'test-bot', '--state', 'working', paneId);
+			await waitFor(
+				() => sessionReports().some((m) => JSON.stringify(m.session.snapshot).includes('"agent_status":"working"')),
+				2000
 			);
 		} finally {
 			gateway.stop();
@@ -89,6 +98,12 @@ describe.skipIf(!herdrAvailable)('herdr gateway', () => {
 			gateway.stop();
 		}
 	});
+});
+
+test('agent panes come from the snapshot, deduplicated and sorted', () => {
+	expect(agentPaneIds({ agents: [{ pane_id: 'w2:p1' }, { pane_id: 'w1:p3' }, { pane_id: 'w2:p1' }, {}] })).toEqual(['w1:p3', 'w2:p1']);
+	expect(agentPaneIds(null)).toEqual([]);
+	expect(agentPaneIds({ agents: 'nope' })).toEqual([]);
 });
 
 test('meaningful comparison ignores output-driven fields', () => {

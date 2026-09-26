@@ -70,7 +70,7 @@ Herdr is Apache-2.0 and written in Rust. It is essentially a single-maintainer p
   2. Call `session.snapshot`.
   3. Apply the buffered events.
   4. After every reconnect, do the whole thing again.
-- Agent status changes need a per-pane `pane.agent_status_changed{pane_id}` subscription, or `pane.updated` (which carries `agent_status`).
+- Agent status changes only arrive through a per-pane `pane.agent_status_changed{pane_id}` subscription (verified: no general event fires). The runner keeps one subscription covering exactly the panes that host an agent (from `snapshot.agents`), rebuilt when that set changes (Roamgate does the same).
 - Event catalog:
   - `workspace.*`, `worktree.created/opened/removed`, `tab.*`
   - `pane.created/updated/closed/focused/exited/moved/agent_detected/agent_status_changed/output_matched/scroll_changed`
