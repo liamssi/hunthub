@@ -8,9 +8,7 @@
 	import ArrowDownToLineIcon from '@lucide/svelte/icons/arrow-down-to-line';
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import ChevronUpIcon from '@lucide/svelte/icons/chevron-up';
-	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
 	import SearchIcon from '@lucide/svelte/icons/search';
-	import { cn } from '$lib/utils.js';
 	import type { SearchAddon } from '@xterm/addon-search';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { copyText, openWebLink } from '$lib/clipboard';
@@ -42,9 +40,6 @@
 		fitToPane?.();
 	});
 
-	/** Newer output exists that couldn't be added in place (a program redrew its screen). */
-	let stale = $state(false);
-	let redraw: (() => void) | null = null;
 
 
 	// Search through the history (Ctrl+F in the panel, or opened with Alt+Shift+F).
@@ -92,30 +87,21 @@
 		const atEnd = () => !term || term.buffer.active.viewportY >= term.buffer.active.baseY;
 
 		/**
-		 * Shows history. The first time it's drawn in full; after that new output is
-		 * only added in place (no redraw, so no flicker). When a program redrew its
-		 * screen instead, a Refresh button offers the full redraw.
+		 * Shows the newest history. New output is added in place when it only grew
+		 * (no redraw, so no flicker); when earlier lines changed (a program redrew its
+		 * screen) it's drawn again, keeping the reading position when scrolled up.
 		 */
-		let latest = '';
-		function draw(text: string) {
-			if (!term) return;
-			lastText = text;
-			stale = false;
-			term.reset();
-			term.write(text, () => term?.scrollToBottom());
-		}
-		redraw = () => draw(latest);
-		function show(historyText: string, first: boolean) {
-			if (!term) return;
-			const text = historyText;
-			latest = text;
-			if (first) return draw(text);
-			if (text === lastText) return;
-			if (text.startsWith(lastText)) {
-				const follow = atEnd();
+		function show(text: string, first: boolean) {
+			if (!term || text === lastText) return;
+			const follow = first || atEnd();
+			if (!first && text.startsWith(lastText)) {
 				term.write(text.slice(lastText.length), () => follow && term?.scrollToBottom());
-				lastText = text;
-			} else stale = true;
+			} else {
+				const top = term.buffer.active.viewportY;
+				term.reset();
+				term.write(text, () => (follow ? term?.scrollToBottom() : term?.scrollToLine(top)));
+			}
+			lastText = text;
 		}
 
 		async function load(first: boolean) {
@@ -236,12 +222,7 @@
 		<HistoryIcon class="size-3.5" aria-hidden="true" />
 		<span>{loading ? 'Loading history…' : 'History'}</span>
 		<span class="hidden sm:inline">· scroll to the end or press Esc to return</span>
-		{#if stale}
-			<Button size="sm" variant="ghost" class="ms-auto h-5 px-1.5 text-xs text-foreground" onclick={() => redraw?.()} title="Show the newest output">
-				<RefreshCwIcon data-icon="inline-start" />Refresh
-			</Button>
-		{/if}
-		<Button size="sm" variant="ghost" class={cn('h-5 px-1.5 text-xs', !stale && 'ms-auto')} onclick={openSearch} aria-label="Search history" title="Search (Ctrl+F)">
+		<Button size="sm" variant="ghost" class="ms-auto h-5 px-1.5 text-xs" onclick={openSearch} aria-label="Search history" title="Search (Ctrl+F)">
 			<SearchIcon data-icon="inline-start" />Search
 		</Button>
 		<Button size="sm" variant="ghost" class="h-5 px-1.5 text-xs" onclick={onclose}>
