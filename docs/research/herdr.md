@@ -141,3 +141,19 @@ Herdr is Apache-2.0 and written in Rust. It is essentially a single-maintainer p
 ## Hermes
 - `herdr integration install hermes` puts a Hermes plugin in `~/.hermes/plugins/` that reports the session id.
 - Hermes orchestrates through the Herdr skill (`agent start/prompt/wait/read`). It is a peer socket client, just like the HuntHub runner.
+
+## Agent internals (added 2026-09-27, v0.9.1 source)
+- **Two kinds of authority:**
+  - Lifecycle hooks decide the state for Pi, OMP, Kimi, OpenCode, Kilo and MastraCode.
+  - The **screen** decides it for Claude, Codex, Copilot, Cursor, Hermes, Grok and others; their hooks only report the session (`docs/next/website/src/content/docs/agents.mdx`).
+- **Screen detection:** prioritized manifest rules (`src/detect/manifests/*.toml`). Each rule has a region (`osc_title`, `bottom_non_empty_lines(12)`, `prompt_box_body`…) and a matcher.
+  - Claude's blocked rules are `live_blocked_form` (the permission form), `dynamic_workflow_prompt` and `mcp_elicitation_prompt`.
+  - `agent.explain` reports which rule matched, so it tells *what kind* of question is pending, not its text.
+- **Claude and Codex hooks:** a `SessionStart` hook only, reporting the session id; Claude's also sends `transcript_path`.
+  - The hook script **does nothing without `python3` on PATH**.
+  - Herdr keeps the transcript path only for pi and omp (`src/agent_resume.rs`), so for Claude and Codex you get the id alone.
+- **Messages go nowhere:** the `message` a hook can report is stored but not returned by any API response.
+- **Resume:** fixed argv per agent (`claude --resume <id>`, `codex resume <id>`…), official `herdr:<agent>` sources only.
+- **Deep reading:** `agent.read` with more lines than the screen, on an *idle* full-screen agent, scrolls the agent's own history and back. It returns `agent_not_idle` while the agent works.
+- **Notifications:** `SemanticNotification` (NeedsAttention, Finished, …) reaches only client shells over the binary protocol.
+- **No orchestration:** agent-to-agent control is only start / prompt --wait / read, with no message bus. Headless agent modes are deliberately ignored.

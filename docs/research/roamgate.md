@@ -39,3 +39,16 @@ The Herdr plugin is only a launcher; the bridge runs as a user service.
 - "UI access = full authority."
 
 HuntHub owns multi-user auth, roles and audit.
+
+## Agent handling (added 2026-09-27, main d094413)
+- **No launch or prompt API use:** it never calls `agent.start` or `agent.prompt`. The composer types into the terminal (Insert, or Send = + Enter), and review feedback pre-fills with `pane.send_text` without submitting (`web/src/annotations.ts`, `web/src/store.ts`).
+- **Transcripts** (`server/src/agent/session-resolver.ts`):
+  - A reported path is read directly.
+  - An id is searched on disk: `~/.claude/projects/**/<id>.jsonl`, `~/.codex/sessions/**`, Kimi and Pi folders.
+  - Otherwise it takes the newest session in the pane's folder.
+  - Seven per-agent parsers produce ATIF trajectories (`session-trajectory.ts`, about 1100 lines).
+  - It re-reads whole files and keeps a 200-entry window.
+  - Remote (SSH) lookups by id don't work, so Claude and Codex history is likely local-only.
+- **Tokens:** normalized from transcripts (`token-usage.ts`); no costs.
+- **"What changed" diffs** come from git, including a private-index snapshot at each active→idle boundary (`server/src/workspace/git-snapshot.ts`), not from tool calls.
+- **No approval UI:** blocked is a badge, and you answer in the terminal.
