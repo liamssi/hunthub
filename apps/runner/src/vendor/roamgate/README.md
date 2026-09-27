@@ -11,7 +11,10 @@ Copied unchanged except:
 
 - `thin-client.ts`: only the `FrameData` types and readers are kept.
 - `logger.ts`: only the `Logger` type and `silentLogger`.
-- `endpoint-terminal-session.ts`: imports the logger from `./logger`.
+- `endpoint-terminal-session.ts`: imports the logger from `./logger`; adds
+  `paneState()` (mouse reporting, alternate screen, size) for HuntHub.
+- `endpoint-surface.ts`, `endpoint-client.ts`: keep the pane's
+  `alternate_screen_active` flag (`alternateScreen`) instead of skipping it.
 
 HuntHub code lives outside this folder (`src/herdr/terminals.ts`); keep edits
 here minimal so upstream fixes can be pulled in by copying the files again.

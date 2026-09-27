@@ -170,7 +170,7 @@ export function runConnection({ hubUrl, log, ...opts }: Options): Promise<void> 
 						terminals?.resize(msg.channel, msg.cols, msg.rows);
 						break;
 					case 'term.scroll':
-						terminals?.scroll(msg.channel, msg.direction, msg.lines);
+						terminals?.scroll(msg.channel, msg.direction, msg.lines, msg.column, msg.row);
 						break;
 					case 'term.close':
 						terminals?.close(msg.channel);

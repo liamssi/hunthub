@@ -141,7 +141,15 @@ export const serverMessageSchema = z.discriminatedUnion('type', [
 	/** Keyboard input (base64 bytes), only for control terminals. */
 	z.object({ type: z.literal('term.input'), channel: z.string().max(64), bytes: z.string().max(65536) }),
 	z.object({ type: z.literal('term.resize'), channel: z.string().max(64), cols: z.number().int().min(10).max(1000), rows: z.number().int().min(4).max(500) }),
-	z.object({ type: z.literal('term.scroll'), channel: z.string().max(64), direction: z.enum(['up', 'down']), lines: z.number().int().min(1).max(500) }),
+	/** A wheel scroll; column and row (0-based, in the pane) say where the pointer is, for programs that use the mouse. */
+	z.object({
+		type: z.literal('term.scroll'),
+		channel: z.string().max(64),
+		direction: z.enum(['up', 'down']),
+		lines: z.number().int().min(1).max(500),
+		column: z.number().int().min(0).max(1000).optional(),
+		row: z.number().int().min(0).max(500).optional()
+	}),
 	z.object({ type: z.literal('term.close'), channel: z.string().max(64) }),
 	/** Updated timings; the runner applies them immediately. */
 	z.object({

@@ -76,6 +76,7 @@ export interface PaneSurfacePaneMeta {
   } | null;
   focused: boolean;
   mouseReporting: boolean;
+  alternateScreen: boolean;
 }
 
 export interface EndpointSurface {

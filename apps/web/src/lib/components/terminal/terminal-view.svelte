@@ -195,7 +195,20 @@
 			// Copy and paste like other web terminals: Ctrl+C copies when text is selected
 			// (and still interrupts when not), Ctrl+Shift+C copies, Ctrl+V / Ctrl+Shift+V paste.
 			const t = term;
+			// Enter with Shift, Alt or Ctrl reaches the terminal as plain Enter; programs
+			// that tell them apart (e.g. Shift+Enter for a new line) get the modifier:
+			// over native Herdr re-encodes it for the program, over the CLI Shift/Alt+Enter
+			// is sent as Esc Enter, which most agent TUIs take as a new line.
+			let typeKeys: ((text: string) => void) | null = null;
 			t.attachCustomKeyEventHandler((e) => {
+				if (e.key === 'Enter' && (e.shiftKey || e.altKey || e.ctrlKey) && !e.metaKey && typeKeys) {
+					if (e.type === 'keydown') {
+						const mod = 1 + (e.shiftKey ? 1 : 0) + (e.altKey ? 2 : 0) + (e.ctrlKey ? 4 : 0);
+						typeKeys(transport === 'native' ? `\x1b[13;${mod}u` : e.shiftKey || e.altKey ? '\x1b\r' : '\r');
+					}
+					e.preventDefault();
+					return false;
+				}
 				if (e.type !== 'keydown' || !(e.ctrlKey || e.metaKey) || e.altKey) return true;
 				const key = e.key.toLowerCase();
 				if (key === 'c' && (e.shiftKey || t.hasSelection())) {
@@ -213,6 +226,10 @@
 			term.open(container);
 			fit.fit();
 			untrack(() => oncolschange)?.(term.cols);
+			// Pastes are always marked (bracketed), so Herdr delivers them as pastes, the way
+			// the program expects, instead of as typed keys whose line breaks submit early.
+			// Herdr's own UI (the session view) sets this itself.
+			if (view === 'pane') term.write('\x1b[?2004h');
 
 			const send = (msg: object) => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
 			const decoder = new TextDecoder();
@@ -280,6 +297,7 @@
 					for (let i = 0; i < bytes.length; i += INPUT_CHUNK) send({ type: 'input', bytes: toBase64(bytes.subarray(i, i + INPUT_CHUNK)) });
 				};
 				term.onData((data) => sendInput(encoder.encode(data)));
+				if (view === 'pane') typeKeys = (text) => sendInput(encoder.encode(text));
 				term.onBinary((data) => sendInput(Uint8Array.from(data, (c) => c.charCodeAt(0) & 0xff)));
 				term.focus();
 			}
@@ -295,12 +313,16 @@
 						return false;
 					}
 					// Pixels (trackpads) become lines by the row height; line and page modes count as given.
-					const rowHeight = (container.querySelector('.xterm-screen')?.clientHeight ?? 0) / t.rows || 16;
+					const screen = container.querySelector('.xterm-screen')?.getBoundingClientRect();
+					const rowHeight = (screen?.height ?? 0) / t.rows || 16;
 					pending += e.deltaMode === 1 ? delta : e.deltaMode === 2 ? delta * t.rows : delta / rowHeight;
 					const lines = Math.trunc(pending);
 					if (lines) {
 						pending -= lines;
-						send({ type: 'scroll', direction: lines < 0 ? 'up' : 'down', lines: Math.min(Math.abs(lines), 500) });
+						// Where the pointer is, for programs that take the wheel as mouse input.
+						const cell = (offset: number, size: number, count: number) => Math.min(Math.max(Math.floor((offset / size) * count), 0), count - 1);
+						const at = screen?.width && screen.height ? { column: cell(e.clientX - screen.left, screen.width, t.cols), row: cell(e.clientY - screen.top, screen.height, t.rows) } : {};
+						send({ type: 'scroll', direction: lines < 0 ? 'up' : 'down', lines: Math.min(Math.abs(lines), 500), ...at });
 					}
 					return false;
 				});

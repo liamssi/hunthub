@@ -255,6 +255,18 @@ export class EndpointTerminalSession extends EventEmitter {
     });
   }
 
+  /** The pane's current input state: mouse reporting, alternate screen, size. */
+  paneState(): { mouseReporting: boolean; alternateScreen: boolean; width: number; height: number } | null {
+    const pane = this.latestSurface()?.panes.find((p) => p.paneId === this.paneId);
+    if (!pane) return null;
+    return {
+      mouseReporting: pane.mouseReporting,
+      alternateScreen: pane.alternateScreen,
+      width: pane.innerRect.width,
+      height: pane.innerRect.height,
+    };
+  }
+
   private latestSurface(): EndpointSurface | null {
     return this.client.currentSurface;
   }

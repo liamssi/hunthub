@@ -24,6 +24,10 @@ import { DEFAULT_SESSION, socketPathFor } from './client';
 type Open = Extract<ServerMessage, { type: 'term.open' }>;
 type Send = (message: RunnerMessage) => boolean | void;
 
+/** Turn the browser terminal's mouse reporting on (button events, SGR encoding) or off. */
+const MOUSE_ON = '\x1b[?1000h\x1b[?1002h\x1b[?1006h';
+const MOUSE_OFF = '\x1b[?1002l\x1b[?1000l\x1b[?1006l';
+
 /** Upper bound on open terminals per runner. */
 const MAX_TERMINALS = 32;
 /** Pane ids like w1:p2, terminal ids like term_abc, or agent names. */
@@ -73,8 +77,10 @@ export class TerminalManager {
 		this.channels.get(channel)?.write({ type: 'terminal.resize', cols, rows });
 	}
 
-	scroll(channel: string, direction: 'up' | 'down', lines: number) {
-		this.channels.get(channel)?.write({ type: 'terminal.scroll', direction, lines, source: 'wheel' });
+	/** A wheel scroll; column and row (in the pane) say where the pointer is, for programs that use the mouse. */
+	scroll(channel: string, direction: 'up' | 'down', lines: number, column?: number, row?: number) {
+		const at = column !== undefined && row !== undefined ? { column, row } : {};
+		this.channels.get(channel)?.write({ type: 'terminal.scroll', direction, lines, source: 'wheel', ...at });
 	}
 
 	close(channel: string) {
@@ -168,9 +174,18 @@ export class TerminalManager {
 			this.send({ type: 'term.closed', channel: msg.channel, reason });
 		};
 
+		// Frames are pictures of the pane, without the input modes its program set; the
+		// browser's terminal learns whether to report the mouse from Herdr's pane state.
+		let mouseOn: boolean | null = null;
 		session.on('terminal', (f: { seq: number; width: number; height: number; bytes: Buffer }) => {
 			if (ended) return;
-			const bytes = f.bytes.toString('base64');
+			const mouse = !!session.paneState()?.mouseReporting;
+			let raw = f.bytes;
+			if (mouse !== mouseOn) {
+				mouseOn = mouse;
+				raw = Buffer.concat([Buffer.from(mouse ? MOUSE_ON : MOUSE_OFF), raw]);
+			}
+			const bytes = raw.toString('base64');
 			if (bytes.length > RUNNER_MAX_MESSAGE_BYTES - 1024) return end('The terminal is too large to stream; make it smaller.');
 			this.send({ type: 'term.frame', channel: msg.channel, frame: { seq: f.seq, full: true, width: f.width, height: f.height, bytes } });
 			this.onActivity(msg.session, msg.target);
@@ -194,13 +209,31 @@ export class TerminalManager {
 				if (pending.length < 1000) pending.push(line);
 				return;
 			}
-			const m = line as { type: string; bytes?: string; cols?: number; rows?: number; direction?: 'up' | 'down'; lines?: number };
+			const m = line as { type: string; bytes?: string; cols?: number; rows?: number; direction?: 'up' | 'down'; lines?: number; column?: number; row?: number };
 			try {
 				if (m.type === 'terminal.input' && msg.mode === 'control' && m.bytes) session.input(Buffer.from(m.bytes, 'base64'));
 				else if (m.type === 'terminal.resize' && m.cols && m.rows) session.resize(m.cols, m.rows);
-				else if (m.type === 'terminal.scroll' && m.direction && m.lines) session.scroll(m.direction, m.lines, null, null, 'page-key');
+				else if (m.type === 'terminal.scroll' && m.direction && m.lines) scroll(m.direction, m.lines, m.column, m.row);
 			} catch (e) {
 				this.log(`terminal ${msg.channel}: ${e instanceof Error ? e.message : e}`);
+			}
+		};
+
+		/**
+		 * The wheel, as Herdr handles it for its own clients: to the program when it
+		 * reports the mouse (at the pointer), as arrow keys to a full-screen program
+		 * that doesn't (alternate scroll), and otherwise through the pane's scrollback.
+		 */
+		const scroll = (direction: 'up' | 'down', lines: number, column?: number, row?: number) => {
+			const state = session.paneState();
+			if (state?.mouseReporting) {
+				const clamp = (v: number | undefined, size: number) => Math.min(Math.max(v ?? Math.floor(size / 2), 0), Math.max(size - 1, 0));
+				session.scroll(direction, lines, clamp(column, state.width), clamp(row, state.height), 'wheel');
+			} else if (state?.alternateScreen) {
+				const arrow = direction === 'up' ? '\x1b[A' : '\x1b[B';
+				session.input(Buffer.from(arrow.repeat(Math.min(lines, 5))));
+			} else {
+				session.scroll(direction, lines, null, null, 'page-key');
 			}
 		};
 

@@ -83,7 +83,16 @@ export function terminalFromBrowser(channelId: string, message: unknown) {
 		sendToMachine(c.machineId, { type: 'term.resize', channel: c.id, cols, rows });
 	} else if (m.type === 'scroll' && (m.direction === 'up' || m.direction === 'down')) {
 		const lines = Math.min(Math.max(Number(m.lines) || 3, 1), 500);
-		sendToMachine(c.machineId, { type: 'term.scroll', channel: c.id, direction: m.direction, lines });
+		const at = (v: unknown, max: number) => (Number.isInteger(v) && (v as number) >= 0 && (v as number) <= max ? (v as number) : undefined);
+		const column = at(m.column, 1000);
+		const row = at(m.row, 500);
+		sendToMachine(c.machineId, {
+			type: 'term.scroll',
+			channel: c.id,
+			direction: m.direction,
+			lines,
+			...(column !== undefined && row !== undefined && { column, row })
+		});
 	}
 }
 
