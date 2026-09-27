@@ -6,7 +6,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { mode as colorMode } from 'mode-watcher';
 	import { browser } from '$app/environment';
-	import { afterNavigate, goto } from '$app/navigation';
+	import { afterNavigate, goto, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import CompassIcon from '@lucide/svelte/icons/compass';
 	import EllipsisVerticalIcon from '@lucide/svelte/icons/ellipsis-vertical';
@@ -38,6 +38,7 @@
 	import { startSession } from '$lib/console';
 	import { fleet, machineById, needsYouCount, sessionOf, workspaceHref } from '$lib/fleet.svelte';
 	import { findPin, togglePin } from '$lib/pins.svelte';
+	import { prefs, setPreferences } from '$lib/preferences.svelte';
 	import { appearance, loadAppearance, themeColors, workspaceVars } from '$lib/terminal-appearance.svelte';
 	import { cn } from '$lib/utils.js';
 
@@ -108,6 +109,16 @@
 
 	/** A new object each time the URL asks for a pane, so the session goes there again. */
 	const jump = $derived(requestedPane ? { paneId: requestedPane, at: page.url.href } : null);
+	/**
+	 * Once there, the URL forgets the pane: a refresh then keeps what you selected since
+	 * (each session remembers its own selection) instead of going back to it.
+	 */
+	function forgetJump() {
+		if (!page.url.searchParams.has('pane')) return;
+		const url = new URL(page.url);
+		url.searchParams.delete('pane');
+		replaceState(url, page.state);
+	}
 
 	function show(r: Ref, paneId?: string | null) {
 		void goto(workspaceHref(r.machineId, r.session, paneId), { keepFocus: true, noScroll: true });
@@ -187,12 +198,9 @@
 	});
 
 	type View = 'herdr' | 'layout';
-	let view = $state<View>('layout');
-	let transport = $state<TerminalTransport>('cli');
-	onMount(() => {
-		view = load('hunthub.session.view') === 'herdr' ? 'herdr' : 'layout';
-		transport = load('hunthub.terminal.transport') === 'native' ? 'native' : 'cli';
-	});
+	// Both are the user's settings (they follow them to any browser); native is the default connection.
+	const view = $derived<View>(prefs.sessionView ?? 'layout');
+	const transport = $derived<TerminalTransport>(prefs.transport ?? 'native');
 
 	// Browser full screen for the whole workspace.
 	let root = $state<HTMLElement>();
@@ -229,7 +237,7 @@
 </svelte:head>
 
 {#snippet sessionsHeader()}
-	<div class="flex h-10 items-center gap-1 px-2">
+	<div class="sticky top-0 z-10 flex h-10 items-center gap-1 bg-sidebar px-2">
 		<Sidebar.Trigger />
 		<span class="ms-1 me-auto text-xs font-medium text-muted-foreground">Sessions</span>
 		<Button size="icon-sm" variant="ghost" class="size-6" aria-label="Explore" title="Explore" href="/explore"><CompassIcon /></Button>
@@ -302,8 +310,7 @@
 			(v) => {
 				// Clicking the active option would clear it; one view is always shown.
 				if (v !== 'herdr' && v !== 'layout') return;
-				view = v;
-				save('hunthub.session.view', v);
+				setPreferences({ sessionView: v });
 			}
 		}
 		aria-label="Session view"
@@ -333,8 +340,7 @@
 					bind:value={
 						() => transport,
 						(v) => {
-							transport = v === 'native' ? 'native' : 'cli';
-							save('hunthub.terminal.transport', transport);
+							setPreferences({ transport: v === 'cli' ? 'cli' : 'native' });
 						}
 					}
 				>
@@ -403,6 +409,7 @@
 						{transport}
 						active={shown}
 						jump={shown ? jump : null}
+						onjumped={forgetJump}
 						header={sessionsHeader}
 						{controls}
 					/>

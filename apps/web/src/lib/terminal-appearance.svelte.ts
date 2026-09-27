@@ -1,9 +1,10 @@
 // How terminals look: font, size and color theme. Shared by every terminal on
-// the page and remembered per browser; changes apply live, without reconnecting.
+// the page and kept in the user's settings; changes apply live, without reconnecting.
 import '@fontsource-variable/jetbrains-mono';
 import '@fontsource-variable/fira-code';
 import '@fontsource-variable/geist-mono';
 import type { ITheme } from '@xterm/xterm';
+import { prefs, setPreferences } from './preferences.svelte';
 
 const SYSTEM_MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
 
@@ -124,31 +125,23 @@ export type TerminalThemeId = (typeof terminalThemes)[number]['id'];
 
 export const FONT_SIZES = { min: 10, max: 22, default: 14 } as const;
 const DEFAULTS = { font: 'jetbrains' as TerminalFontId, size: FONT_SIZES.default as number, theme: 'nord' as TerminalThemeId };
-const STORAGE_KEY = 'hunthub.terminal.appearance.v2';
 
 export const appearance = $state({ ...DEFAULTS });
 
 export const fontFamily = (id: TerminalFontId) => (terminalFonts.find((f) => f.id === id) ?? terminalFonts[0]).family;
 export const themeColors = (id: TerminalThemeId): ITheme => (terminalThemes.find((t) => t.id === id) ?? terminalThemes[0]).colors;
 
-/** Reads the saved appearance (browser only; ignores anything unknown). */
+/** Applies the user's saved appearance (their settings; anything unknown is ignored). */
 export function loadAppearance() {
-	try {
-		const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Partial<typeof DEFAULTS>;
-		if (terminalFonts.some((f) => f.id === saved.font)) appearance.font = saved.font!;
-		if (terminalThemes.some((t) => t.id === saved.theme)) appearance.theme = saved.theme!;
-		if (typeof saved.size === 'number') appearance.size = clampSize(saved.size);
-	} catch {
-		// Only a convenience.
-	}
+	const saved = prefs.terminal ?? {};
+	appearance.font = terminalFonts.some((f) => f.id === saved.font) ? (saved.font as TerminalFontId) : DEFAULTS.font;
+	appearance.theme = terminalThemes.some((t) => t.id === saved.theme) ? (saved.theme as TerminalThemeId) : DEFAULTS.theme;
+	appearance.size = typeof saved.size === 'number' ? clampSize(saved.size) : DEFAULTS.size;
 }
 
+/** Saves the appearance to the user's settings (they follow the user to any browser). */
 export function saveAppearance() {
-	try {
-		localStorage.setItem(STORAGE_KEY, JSON.stringify(appearance));
-	} catch {
-		// Only a convenience.
-	}
+	setPreferences({ terminal: { font: appearance.font, size: appearance.size, theme: appearance.theme } });
 }
 
 export const clampSize = (n: number) => Math.min(FONT_SIZES.max, Math.max(FONT_SIZES.min, Math.round(n)));

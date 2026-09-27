@@ -7,6 +7,7 @@
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import TerminalView, { type TerminalMode, type TerminalState, type TerminalTransport } from './terminal-view.svelte';
+	import { prefs, setPreferences } from '$lib/preferences.svelte';
 
 	/** A pane's live terminal. Watching is read-only; control sends keystrokes. */
 	let {
@@ -17,22 +18,15 @@
 		title
 	}: { open?: boolean; machineId: string; session: string; target: string; title: string } = $props();
 
-	const TRANSPORT_KEY = 'hunthub.terminal.transport';
 	const transports: { value: TerminalTransport; label: string }[] = [
 		{ value: 'cli', label: 'Herdr CLI' },
 		{ value: 'native', label: 'Native protocol' }
 	];
 
-	function savedTransport(): TerminalTransport {
-		try {
-			return localStorage.getItem(TRANSPORT_KEY) === 'native' ? 'native' : 'cli';
-		} catch {
-			return 'cli';
-		}
-	}
+	const savedTransport = (): TerminalTransport => prefs.transport ?? 'native';
 
 	let mode = $state<TerminalMode>('observe');
-	let transport = $state<TerminalTransport>('cli');
+	let transport = $state<TerminalTransport>('native');
 	let takeover = $state(false);
 	let attempt = $state(0);
 	let termState = $state<TerminalState>({ phase: 'connecting' });
@@ -47,12 +41,8 @@
 	});
 
 	function setTransport(value: string) {
-		transport = value === 'native' ? 'native' : 'cli';
-		try {
-			localStorage.setItem(TRANSPORT_KEY, transport);
-		} catch {
-			// Only a convenience.
-		}
+		transport = value === 'cli' ? 'cli' : 'native';
+		setPreferences({ transport });
 	}
 
 	const reconnect = (next: Partial<{ mode: TerminalMode; takeover: boolean }> = {}) => {

@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
-import { bigint, check, index, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { bigint, check, index, jsonb, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { user } from './auth-schema';
+import type { Preferences } from '@hunthub/shared/preferences';
 import { machine } from './machines-schema';
 
 /**
@@ -30,3 +31,12 @@ export const userPin = pgTable(
 		check('user_pin_label_length', sql`char_length(${t.label}) <= 200`)
 	]
 );
+
+/** Each user's settings (theme, terminal, workspace choices), so they follow the user to any browser. */
+export const userPreference = pgTable('user_preference', {
+	userId: text('user_id')
+		.primaryKey()
+		.references(() => user.id, { onDelete: 'cascade' }),
+	prefs: jsonb('prefs').$type<Preferences>().notNull().default({}),
+	updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull()
+});

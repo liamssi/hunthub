@@ -15,6 +15,7 @@
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
 	import { installedAgentKinds, launchAgent } from '$lib/console';
+	import { prefs, setPreferences } from '$lib/preferences.svelte';
 
 	let {
 		open = $bindable(false),
@@ -35,7 +36,6 @@
 		onstarted?: (paneId: string) => void;
 	} = $props();
 
-	const KIND_KEY = 'hunthub.agent.kind';
 	type Where = 'tab' | 'right' | 'down';
 
 	let installed = $state<string[] | null | 'loading'>('loading');
@@ -65,12 +65,7 @@
 		installed = 'loading';
 		void installedAgentKinds(machineId, session.name).then((kinds) => {
 			installed = kinds;
-			let last = '';
-			try {
-				last = localStorage.getItem(KIND_KEY) ?? '';
-			} catch {
-				// Only a convenience.
-			}
+			const last = prefs.agentKind ?? '';
 			const choices = kinds ?? AGENT_KINDS.map((k) => k.kind);
 			kind = choices.includes(last) ? last : (choices[0] ?? '');
 		});
@@ -82,11 +77,7 @@
 		const chosenName = name.trim();
 		nameError = chosenName ? validateAgentName(chosenName) : null;
 		if (nameError) return;
-		try {
-			localStorage.setItem(KIND_KEY, kind);
-		} catch {
-			// Only a convenience.
-		}
+		setPreferences({ agentKind: kind });
 		const request = {
 			kind,
 			...(chosenName && { name: chosenName }),

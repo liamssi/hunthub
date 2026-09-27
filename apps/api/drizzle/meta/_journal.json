@@ -57,6 +57,13 @@
       "when": 1790464015841,
       "tag": "0007_many_proteus",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790513575824,
+      "tag": "0008_smart_iron_patriot",
+      "breakpoints": true
     }
   ]
 }

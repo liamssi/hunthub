@@ -6,6 +6,7 @@
 	import UserIcon from '@lucide/svelte/icons/user';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { mode, toggleMode } from 'mode-watcher';
+	import { setPreferences } from '$lib/preferences.svelte';
 	import { authClient } from '$lib/auth-client';
 	import * as Avatar from '$lib/components/ui/avatar/index.js';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
@@ -74,7 +75,12 @@
 							<a href="/account" {...props}><UserIcon />Account</a>
 						{/snippet}
 					</DropdownMenu.Item>
-					<DropdownMenu.Item onSelect={toggleMode}>
+					<DropdownMenu.Item
+						onSelect={() => {
+							toggleMode();
+							setPreferences({ colorMode: mode.current === 'dark' ? 'dark' : 'light' });
+						}}
+					>
 						{#if mode.current === 'dark'}<SunIcon />Light mode{:else}<MoonIcon />Dark mode{/if}
 					</DropdownMenu.Item>
 				</DropdownMenu.Group>

@@ -33,7 +33,9 @@
 	import Rows2Icon from '@lucide/svelte/icons/rows-2';
 	import FolderIcon from '@lucide/svelte/icons/folder';
 	import GitBranchIcon from '@lucide/svelte/icons/git-branch';
+	import FocusIcon from '@lucide/svelte/icons/focus';
 	import Maximize2Icon from '@lucide/svelte/icons/maximize-2';
+	import ShrinkIcon from '@lucide/svelte/icons/shrink';
 	import Minimize2Icon from '@lucide/svelte/icons/minimize-2';
 	import PanelLeftCloseIcon from '@lucide/svelte/icons/panel-left-close';
 	import PanelLeftOpenIcon from '@lucide/svelte/icons/panel-left-open';
@@ -53,6 +55,7 @@
 	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
 	import { adoptAgent, consoleCall, consoleRequest, stopAgent } from '$lib/console';
 	import { setWatchingProbe } from '$lib/attention.svelte';
+	import { prefs, setPreferences } from '$lib/preferences.svelte';
 	import { prefetchHistory } from '$lib/pane-history';
 	import { appearance, themeColors, workspaceVars } from '$lib/terminal-appearance.svelte';
 	import { cn } from '$lib/utils.js';
@@ -69,7 +72,8 @@
 		header,
 		controls,
 		active = true,
-		jump = null
+		jump = null,
+		onjumped
 	}: {
 		machineId: string;
 		session: SessionView;
@@ -83,6 +87,8 @@
 		active?: boolean;
 		/** Go to a pane (a new object each time asks again). */
 		jump?: { paneId: string } | null;
+		/** The requested pane is shown (the page can forget the request). */
+		onjumped?: () => void;
 	} = $props();
 
 	// The workspace takes the terminal theme's colors (set inline: the .dark class would override inherited ones).
@@ -98,8 +104,25 @@
 		consoleCall(machineId, session.name, label, method, params);
 
 	// --- Selection: a space, and a remembered tab per space ---------------------
-	let selectedSpaceId = $state<string | null>(null);
-	let tabBySpace = $state<Record<string, string>>({});
+	// What's selected in this session (space, tab per space, pane per tab, zoom) is
+	// kept across page refreshes: exactly for this browser tab (sessionStorage), and
+	// as a starting point for new tabs (localStorage).
+	const viewKey = untrack(() => `hunthub.workspace.view:${machineId}:${session.name}`);
+	type SavedView = { space?: string | null; tabs?: Record<string, string>; panes?: Record<string, string>; zoomed?: Record<string, string | null> };
+	function readView(): SavedView {
+		for (const store of [sessionStorage, localStorage]) {
+			try {
+				const saved = JSON.parse(store.getItem(viewKey) ?? 'null');
+				if (saved && typeof saved === 'object') return saved as SavedView;
+			} catch {
+				// Only a convenience.
+			}
+		}
+		return {};
+	}
+	const savedView = typeof window === 'undefined' ? {} : readView();
+	let selectedSpaceId = $state<string | null>(savedView.space ?? null);
+	let tabBySpace = $state<Record<string, string>>(savedView.tabs ?? {});
 	const space = $derived<WorkspaceView | undefined>(
 		session.workspaces.find((w) => w.id === selectedSpaceId) ?? session.workspaces[0]
 	);
@@ -122,17 +145,15 @@
 	// --- Sidebar ----------------------------------------------------------------
 	const SIDEBAR_KEY = 'hunthub.workspace.sidebar';
 	const SIDEBAR_WIDTH_KEY = 'hunthub.workspace.sidebarWidth';
-	const SIDEBAR_LIST_KEY = 'hunthub.workspace.sidebarList';
 	const DEFAULT_WIDTH = 240;
 	const clampWidth = (w: number) => Math.min(480, Math.max(180, Math.round(w)));
 	let sidebarOpen = $state(true);
 	let sidebarWidth = $state(DEFAULT_WIDTH);
 	/** "separate": spaces and agents in two lists, as in Herdr; "nested": each space's agents under it. */
-	let sidebarList = $state<'separate' | 'nested'>('separate');
+	const sidebarList = $derived<'separate' | 'nested'>(prefs.sidebarList ?? 'separate');
 	$effect(() => {
 		try {
 			sidebarWidth = clampWidth(Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || DEFAULT_WIDTH);
-			sidebarList = localStorage.getItem(SIDEBAR_LIST_KEY) === 'nested' ? 'nested' : 'separate';
 		} catch {
 			// Only a convenience.
 		}
@@ -148,6 +169,51 @@
 		sidebarWidth = clampWidth(w);
 		remember(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
 	}
+	// The sidebar's sections (open sessions, spaces, agents) each scroll on their own;
+	// the dividers between them set a section's height. Until dragged a section fits
+	// its content (up to a share of the sidebar); double-click a divider to go back.
+	const SECTIONS_KEY = 'hunthub.workspace.sidebarSections';
+	type SectionKey = 'sessions' | 'spaces';
+	let sectionHeights = $state<Partial<Record<SectionKey, number>>>({});
+	const sectionEls: Partial<Record<SectionKey, HTMLElement>> = {};
+	$effect(() => {
+		try {
+			const saved = JSON.parse(localStorage.getItem(SECTIONS_KEY) ?? '{}');
+			if (saved && typeof saved === 'object') sectionHeights = saved;
+		} catch {
+			// Only a convenience.
+		}
+	});
+	function setSectionHeight(key: SectionKey, height: number | null) {
+		if (height === null) delete sectionHeights[key];
+		else sectionHeights[key] = Math.round(height);
+		remember(SECTIONS_KEY, JSON.stringify(sectionHeights));
+	}
+	function startSectionResize(key: SectionKey, e: PointerEvent) {
+		const el = sectionEls[key];
+		const aside = el?.closest('aside');
+		if (!el || !aside) return;
+		e.preventDefault();
+		const startY = e.clientY;
+		const start = el.getBoundingClientRect().height;
+		// Leave room for the other sections.
+		const max = Math.max(80, aside.getBoundingClientRect().height - 220);
+		const move = (ev: PointerEvent) => (sectionHeights[key] = Math.round(Math.min(max, Math.max(48, start + ev.clientY - startY))));
+		const up = () => {
+			window.removeEventListener('pointermove', move);
+			window.removeEventListener('pointerup', up);
+			setSectionHeight(key, sectionHeights[key] ?? start);
+		};
+		window.addEventListener('pointermove', move);
+		window.addEventListener('pointerup', up);
+	}
+	function sectionResizeKey(key: SectionKey, e: KeyboardEvent) {
+		if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+		e.preventDefault();
+		const current = sectionHeights[key] ?? sectionEls[key]?.getBoundingClientRect().height ?? 120;
+		setSectionHeight(key, Math.max(48, current + (e.key === 'ArrowDown' ? 16 : -16)));
+	}
+
 	function startSidebarResize(e: PointerEvent) {
 		const el = e.currentTarget as HTMLElement;
 		el.setPointerCapture(e.pointerId);
@@ -191,8 +257,18 @@
 	const agents = $derived(session.workspaces.flatMap((w) => w.agents).sort(byAttention));
 
 	// --- Panes ------------------------------------------------------------------
-	let activePane = $state<Record<string, string>>({});
-	let maximized = $state<Record<string, string | null>>({});
+	let activePane = $state<Record<string, string>>(savedView.panes ?? {});
+	let maximized = $state<Record<string, string | null>>(savedView.zoomed ?? {});
+	$effect(() => {
+		const value = JSON.stringify({ space: selectedSpaceId, tabs: tabBySpace, panes: activePane, zoomed: maximized });
+		for (const store of [sessionStorage, localStorage]) {
+			try {
+				store.setItem(viewKey, value);
+			} catch {
+				// Only a convenience.
+			}
+		}
+	});
 	let states = $state<Record<string, TerminalState>>({});
 	let attempts = $state<Record<string, number>>({});
 	// Scrolling up opens a pane's history over it (kept by HuntHub, preloaded).
@@ -262,8 +338,19 @@
 				selectTab(w.id, t.id);
 				if (maximized[t.id] && maximized[t.id] !== target.paneId) maximized[t.id] = null;
 				void focusWhenReady(t.id, target.paneId);
+				onjumped?.();
 				return;
 			}
+		});
+	});
+
+	// After a refresh the pane that had the keyboard gets it back (unless a jump says otherwise).
+	$effect(() => {
+		if (!active || untrack(() => jump)) return;
+		untrack(() => {
+			const t = tab;
+			const paneId = t && activePane[t.id];
+			if (t && paneId && t.panes.some((p) => p.id === paneId)) void focusWhenReady(t.id, paneId);
 		});
 	});
 
@@ -286,6 +373,15 @@
 	const reconnect = (paneId: string) => (attempts[paneId] = (attempts[paneId] ?? 0) + 1);
 	const toggleMaximize = (tabId: string, paneId: string) =>
 		(maximized[tabId] = maximized[tabId] === paneId ? null : paneId);
+
+	// Zen: one pane covers the whole window (sidebars and bars hidden) for focused
+	// work. The pane stays where it is in the page, so its terminal keeps its connection.
+	let zen = $state<string | null>(null);
+	const toggleZen = (paneId: string) => (zen = zen === paneId ? null : paneId);
+	// Leaving the tab (or the pane closing) ends zen.
+	$effect(() => {
+		if (zen && !tab?.panes.some((p) => p.id === zen)) untrack(() => (zen = null));
+	});
 
 	// --- Actions in place -------------------------------------------------------
 	// Everything here asks Herdr for a change; the new state arrives through live updates.
@@ -522,8 +618,9 @@
 					}
 				},
 				...(rectsFor(t).length > 1
-					? [{ label: max ? 'Restore layout' : 'Maximize', icon: max ? Minimize2Icon : Maximize2Icon, shortcut: keys('Z'), run: () => toggleMaximize(t.id, paneId) }]
-					: [])
+					? [{ label: max ? 'Restore layout' : 'Zoom pane', icon: max ? Minimize2Icon : Maximize2Icon, shortcut: keys('Z'), run: () => toggleMaximize(t.id, paneId) }]
+					: []),
+				{ label: zen === paneId ? 'Leave zen mode' : 'Zen mode', icon: zen === paneId ? ShrinkIcon : FocusIcon, shortcut: keys('Enter'), run: () => toggleZen(paneId) }
 			],
 			[{ label: 'Close pane', icon: XIcon, shortcut: keys('X'), destructive: true, run: () => closePane(t, paneId) }]
 		];
@@ -756,6 +853,7 @@
 		} else if (code === 'Backslash' && paneId) void splitPane(t.id, paneId, 'right');
 		else if (code === 'Minus' && paneId) void splitPane(t.id, paneId, 'down');
 		else if (code === 'KeyZ' && paneId && rectsFor(t).length > 1) toggleMaximize(t.id, paneId);
+		else if (code === 'Enter' && paneId) toggleZen(paneId);
 		else if (code === 'KeyX' && paneId) closePane(t, paneId);
 		else if (code === 'KeyF' && paneId) {
 			historySearch[paneId] = true;
@@ -792,7 +890,8 @@
 		['Move between panes', '←↑→↓'],
 		['Split right', '\\'],
 		['Split down', '-'],
-		['Maximize or restore pane', 'Z'],
+		['Zoom the pane over its splits, or restore', 'Z'],
+		['Zen mode: the pane fills the window, or back', 'Enter'],
 		['Close pane', 'X'],
 		['Show or hide history', 'H'],
 		['New agent', 'A'],
@@ -889,6 +988,25 @@
 	{/each}
 {/snippet}
 
+{#snippet sectionDivider(key: SectionKey, label: string)}
+	<!-- A focusable separator with a value is the ARIA window-splitter pattern (arrow keys resize). -->
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+	<div
+		role="separator"
+		tabindex="0"
+		aria-orientation="horizontal"
+		aria-label={label}
+		aria-valuenow={sectionHeights[key] ?? undefined}
+		title="Drag to resize, double-click to fit the content"
+		class="group/divider relative z-20 -my-1 flex h-2 shrink-0 cursor-row-resize items-center outline-none"
+		onpointerdown={(e) => startSectionResize(key, e)}
+		ondblclick={() => setSectionHeight(key, null)}
+		onkeydown={(e) => sectionResizeKey(key, e)}
+	>
+		<span class="h-px w-full bg-border transition-colors group-hover/divider:bg-foreground/40 group-focus-visible/divider:bg-foreground/40"></span>
+	</div>
+{/snippet}
+
 {#snippet agentRow(a: AgentView, showSpace: boolean)}
 	{@const current = !!tab && activePane[tab.id] === a.paneId && tab.panes.some((p) => p.id === a.paneId)}
 	{@const by = a.run ? `${a.run.adopted ? 'adopted' : 'started'} by ${a.run.by ?? 'someone'}` : null}
@@ -962,11 +1080,19 @@
 				<span class="h-full w-px bg-foreground/40 opacity-0 transition-opacity group-hover/edge:opacity-100 group-focus-visible/edge:opacity-100"></span>
 			</div>
 			{#if header}
-				<div class="shrink-0 border-b">{@render header()}</div>
+				<div
+					bind:this={sectionEls.sessions}
+					class="shrink-0 overflow-y-auto"
+					style:height={sectionHeights.sessions ? `${sectionHeights.sessions}px` : undefined}
+					style:max-height={sectionHeights.sessions ? undefined : '35%'}
+				>
+					{@render header()}
+				</div>
+				{@render sectionDivider('sessions', 'Resize the sessions list')}
 			{/if}
 
-			<div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
-				<div class="flex flex-col gap-2 px-2 pt-2">
+			<div class="flex min-h-0 flex-1 flex-col">
+				<div class="flex shrink-0 flex-col gap-2 px-2 pt-2">
 					<button
 						type="button"
 						class="flex h-8 items-center gap-2 rounded-md border bg-background/40 px-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
@@ -996,8 +1122,14 @@
 						</button>
 					{/if}
 				</div>
-				<section class="flex flex-col gap-0.5 p-2" aria-labelledby="spaces-heading">
-					<div class="flex h-7 items-center gap-1.5 px-2">
+				<section
+					bind:this={sectionEls.spaces}
+					class={cn('flex flex-col gap-0.5 overflow-y-auto px-2 pb-2', sidebarList === 'separate' ? 'shrink-0' : 'min-h-0 flex-1')}
+					style:height={sidebarList === 'separate' && sectionHeights.spaces ? `${sectionHeights.spaces}px` : undefined}
+					style:max-height={sidebarList === 'separate' && !sectionHeights.spaces ? '55%' : undefined}
+					aria-labelledby="spaces-heading"
+				>
+					<div class="sticky top-0 z-10 flex h-9 shrink-0 items-center gap-1.5 bg-sidebar px-2 pt-2">
 						<ToggleGroup.Root
 							type="single"
 							size="sm"
@@ -1007,8 +1139,7 @@
 								() => sidebarList,
 								(v) => {
 									if (v !== 'separate' && v !== 'nested') return;
-									sidebarList = v;
-									remember(SIDEBAR_LIST_KEY, v);
+									setPreferences({ sidebarList: v });
 								}
 							}
 						>
@@ -1086,8 +1217,9 @@
 				</section>
 
 				{#if sidebarList === 'separate'}
-					<section class="flex flex-col gap-0.5 border-t p-2" aria-labelledby="agents-heading">
-						<div class="flex h-7 items-center px-2">
+					{@render sectionDivider('spaces', 'Resize the spaces list')}
+					<section class="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2" aria-labelledby="agents-heading">
+						<div class="sticky top-0 z-10 flex h-9 shrink-0 items-center bg-sidebar px-2 pt-2">
 							<h2 id="agents-heading" class="me-auto text-xs font-medium text-muted-foreground">Agents</h2>
 							{#if agents.length}<span class="text-xs text-muted-foreground tabular-nums">{agents.length}</span>{/if}
 							<Button size="icon-sm" variant="ghost" class="size-6" aria-label="New agent" title="New agent ({keys('A')})" onclick={() => (newAgentOpen = true)}>
@@ -1253,15 +1385,17 @@
 						{@const st = states[r.paneId]}
 						{@const shown = max ? (max === r.paneId ? { x: 0, y: 0, width: 1, height: 1 } : null) : r}
 						{@const active = activePane[t.id] === r.paneId}
+						{@const inZen = zen === r.paneId}
 						<!-- The wrapper only records which pane has the keyboard; the terminal handles keys. -->
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
 						<div
-							class={cn('absolute p-[3px]', !shown && 'invisible')}
-							style:left={pct((shown ?? r).x)}
-							style:top={pct((shown ?? r).y)}
-							style:width={pct((shown ?? r).width)}
-							style:height={pct((shown ?? r).height)}
-							inert={!shown}
+							class={cn(inZen ? 'fixed inset-0 z-40 p-2' : 'absolute p-[3px]', !shown && !inZen && 'invisible')}
+							style:left={inZen ? undefined : pct((shown ?? r).x)}
+							style:top={inZen ? undefined : pct((shown ?? r).y)}
+							style:width={inZen ? undefined : pct((shown ?? r).width)}
+							style:height={inZen ? undefined : pct((shown ?? r).height)}
+							style:background-color={inZen ? themeColors(appearance.theme).background : undefined}
+							inert={!shown && !inZen}
 							data-pane={r.paneId}
 							onpointerdown={() => (activePane[t.id] = r.paneId)}
 							onfocusin={() => (activePane[t.id] = r.paneId)}
@@ -1316,7 +1450,7 @@
 													<span
 														class={cn(
 															'flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 has-[[data-state=open]]:opacity-100',
-															(active || max === r.paneId) && 'opacity-100'
+															(active || max === r.paneId || inZen) && 'opacity-100'
 														)}
 													>
 														<Button size="icon-sm" variant="ghost" class="size-6" aria-label="Refresh" title="Refresh: reconnect and redraw ({keys('R')})" onclick={() => reconnect(r.paneId)}>
@@ -1328,18 +1462,28 @@
 														<Button size="icon-sm" variant="ghost" class="size-6" aria-label="Split down" title="Split down ({keys('-')})" onclick={() => splitPane(t.id, r.paneId, 'down')}>
 															<SquareSplitVerticalIcon />
 														</Button>
-														{#if rects.length > 1}
+														{#if rects.length > 1 && !inZen}
 															<Button
 																size="icon-sm"
 																variant="ghost"
 																class="size-6"
-																aria-label={max === r.paneId ? 'Restore layout' : 'Maximize pane'}
-																title={max === r.paneId ? `Restore layout (${keys('Z')})` : `Maximize (${keys('Z')}, or double-click the title)`}
+																aria-label={max === r.paneId ? 'Restore layout' : 'Zoom pane'}
+																title={max === r.paneId ? `Restore layout (${keys('Z')})` : `Zoom: this pane over its splits (${keys('Z')}, or double-click the title)`}
 																onclick={() => toggleMaximize(t.id, r.paneId)}
 															>
 																{#if max === r.paneId}<Minimize2Icon />{:else}<Maximize2Icon />{/if}
 															</Button>
 														{/if}
+														<Button
+															size="icon-sm"
+															variant="ghost"
+															class="size-6"
+															aria-label={inZen ? 'Leave zen mode' : 'Zen mode'}
+															title={inZen ? `Leave zen mode (${keys('Enter')})` : `Zen mode: this pane fills the window (${keys('Enter')})`}
+															onclick={() => toggleZen(r.paneId)}
+														>
+															{#if inZen}<ShrinkIcon />{:else}<FocusIcon />{/if}
+														</Button>
 														<DropdownMenu.Root>
 															<DropdownMenu.Trigger>
 																{#snippet child({ props: menuProps })}

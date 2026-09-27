@@ -124,6 +124,16 @@
 @layer base {
 	* {
 		@apply border-border outline-ring/50;
+		/* Thin scrollbars in the theme's colors (the browser's own turn white on hover in dark areas). */
+		scrollbar-width: thin;
+		scrollbar-color: color-mix(in oklab, var(--muted-foreground) 45%, transparent) transparent;
+	}
+	/* Native controls (scrollbars, form widgets) follow the light or dark area they're in. */
+	:root {
+		color-scheme: light;
+	}
+	.dark {
+		color-scheme: dark;
 	}
 	body {
 		@apply bg-background text-foreground;
