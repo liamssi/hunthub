@@ -79,7 +79,8 @@
 		}
 	}
 	const pressKey = (a: AgentView, key: string, label: string) => act(a, label, () => sendKeys(a.machineId, a.session, a.paneId, [key]));
-	const typeChoice = (a: AgentView, key: string) => act(a, `Chose ${key}`, () => typeIntoPane(a.machineId, a.session, a.paneId, key, false));
+	// A choice is a key press: as typed text Herdr would paste it, which menus ignore.
+	const typeChoice = (a: AgentView, key: string) => act(a, `Chose ${key}`, () => sendKeys(a.machineId, a.session, a.paneId, [key]));
 	function reply(a: AgentView, event: SubmitEvent) {
 		event.preventDefault();
 		const text = replies[keyOf(a)]?.trim();

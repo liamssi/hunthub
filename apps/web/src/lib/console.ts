@@ -109,12 +109,19 @@ export async function installedAgentKinds(machineId: string, session: string): P
 export const promptAgent = (machineId: string, session: string, paneId: string, text: string) =>
 	send(`${sessionUrl(machineId, session)}/call`, { method: 'POST', body: JSON.stringify({ method: 'agent.prompt', params: { target: paneId, text } }) });
 
-/** Types text into a pane as if at its keyboard, optionally pressing Enter. */
-export const typeIntoPane = (machineId: string, session: string, paneId: string, text: string, enter: boolean) =>
-	send(`${sessionUrl(machineId, session)}/call`, {
-		method: 'POST',
-		body: JSON.stringify({ method: 'pane.send_input', params: { pane_id: paneId, text, ...(enter && { keys: ['Enter'] }) } })
-	});
+/**
+ * Types text into a pane, then optionally presses Enter. Herdr delivers text as a
+ * paste when the program accepts pastes (agents do), so Enter follows a moment
+ * later as its own key press: sent together, an agent takes it as part of the paste.
+ */
+export async function typeIntoPane(machineId: string, session: string, paneId: string, text: string, enter: boolean): Promise<Outcome> {
+	const call = (params: Record<string, unknown>) =>
+		send(`${sessionUrl(machineId, session)}/call`, { method: 'POST', body: JSON.stringify({ method: 'pane.send_input', params: { pane_id: paneId, ...params } }) });
+	const typed = await call({ text });
+	if (!typed.ok || !enter) return typed;
+	await new Promise((resolve) => setTimeout(resolve, 300));
+	return call({ keys: ['Enter'] });
+}
 
 /** Presses keys in a pane (Herdr key names: Enter, Esc, Up, C-c…). */
 export const sendKeys = (machineId: string, session: string, paneId: string, keys: string[]) =>
