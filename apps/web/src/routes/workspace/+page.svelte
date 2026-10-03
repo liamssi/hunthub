@@ -25,6 +25,7 @@
 	import AppearanceDialog from '$lib/components/terminal/appearance-dialog.svelte';
 	import SessionLayout from '$lib/components/terminal/session-layout.svelte';
 	import TerminalView, { type TerminalMode, type TerminalState, type TerminalTransport } from '$lib/components/terminal/terminal-view.svelte';
+	import LinkIndicator from '$lib/components/terminal/link-indicator.svelte';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Command from '$lib/components/ui/command/index.js';
@@ -298,6 +299,7 @@
 {/snippet}
 
 {#snippet controls()}
+	<LinkIndicator />
 	{#if mode === 'observe'}
 		<Badge variant="secondary" class="gap-1"><EyeIcon />Watching</Badge>
 	{/if}
