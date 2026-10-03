@@ -13,7 +13,7 @@
 	import { copyText, openWebLink } from '$lib/clipboard';
 	import HistoryIcon from '@lucide/svelte/icons/history';
 	import { Button } from '$lib/components/ui/button/index.js';
-	import { cachedHistory, fetchHistory } from '$lib/pane-history';
+	import { cachedHistory, fetchHistory, type History } from '$lib/pane-history';
 	import { toast } from 'svelte-sonner';
 	import { appearance, fontFamily, themeColors } from '$lib/terminal-appearance.svelte';
 
@@ -82,6 +82,8 @@
 		let timer: ReturnType<typeof setInterval> | undefined;
 		let observer: ResizeObserver | undefined;
 		let lastText = '';
+		/** Whether what's shown is all of the history (it may open on just the newest lines). */
+		let shownComplete = false;
 
 		const atEnd = () => !term || term.buffer.active.viewportY >= term.buffer.active.baseY;
 
@@ -89,9 +91,11 @@
 		 * Shows the newest history. New output is added in place (no redraw, so no
 		 * flicker). Anything else (a program redrew the bottom of its screen) is drawn
 		 * again only while you're at the end; while you read further up nothing moves,
-		 * and it catches up on the next refresh once you're back at the end.
+		 * and it catches up on the next refresh once you're back at the end. When all
+		 * of the history arrives after the newest lines, it replaces them where you are.
 		 */
-		function show(text: string, first: boolean) {
+		function show(history: History, first: boolean) {
+			const text = history.text;
 			if (!term || text === lastText) return;
 			if (!first && text.startsWith(lastText)) {
 				const follow = atEnd();
@@ -99,8 +103,14 @@
 			} else if (first || atEnd()) {
 				term.reset();
 				term.write(text, () => term?.scrollToBottom());
+			} else if (history.complete && !shownComplete) {
+				const t = term;
+				const fromEnd = t.buffer.active.baseY - t.buffer.active.viewportY;
+				t.reset();
+				t.write(text, () => t.scrollToLine(Math.max(0, t.buffer.active.baseY - fromEnd)));
 			} else return;
 			lastText = text;
+			shownComplete = history.complete;
 		}
 
 		async function load(first: boolean) {
@@ -114,7 +124,7 @@
 				}
 				return;
 			}
-			show(history.text, first);
+			show(history, first);
 		}
 
 		void (async () => {
@@ -181,7 +191,7 @@
 			const cached = cachedHistory(machineId, session, paneId);
 			if (cached) {
 				loading = false;
-				show(cached.text, true);
+				show(cached, true);
 			}
 			await load(!cached);
 			timer = setInterval(() => void load(false), REFRESH_MS);

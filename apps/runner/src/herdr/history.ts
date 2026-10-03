@@ -19,7 +19,12 @@ export const GAP_MARKER = '\x1b[2m⋯ earlier output was not captured ⋯\x1b[0m
 /** Marks where the pane's scrollback was cleared (e.g. \`clear\`, or an agent redrawing after a resize). */
 export const CLEARED_MARKER = '\x1b[2m⋯ the screen was cleared ⋯\x1b[0m';
 
-type Transcript = { lines: string[]; readAt: number };
+/**
+ * A pane's kept lines. Lines are numbered from the first one ever kept, so a
+ * browser holding older lines can ask for just the newest ones: lines before
+ * the last READ_LINES never change, only drop off the front when over the limit.
+ */
+type Transcript = { lines: string[]; readAt: number; /** Lines dropped off the front so far (lines[0]'s number). */ dropped: number };
 
 /**
  * Merges Herdr's latest lines into a transcript. Herdr's lines are the truth for
@@ -70,7 +75,22 @@ const withoutMarkerAtEnd = (lines: string[]) => {
 	return lines.slice(0, end);
 };
 
+/** Reads a pane's last lines from Herdr (ANSI text). */
+type ReadPane = (session: string, paneId: string, lines: number) => Promise<string>;
+
+const readFromHerdr: ReadPane = async (session, paneId, lines) => {
+	const result = await request<{ read?: { text?: string } }>(socketPathFor(session), 'pane.read', {
+		pane_id: paneId,
+		source: 'recent_unwrapped',
+		format: 'ansi',
+		lines
+	});
+	return result.read?.text ?? '';
+};
+
 export class PaneHistory {
+	constructor(private readonly read: ReadPane = readFromHerdr) {}
+
 	private transcripts = new Map<string, Transcript>();
 	private pending = new Map<string, ReturnType<typeof setTimeout>>();
 	private reading = new Map<string, Promise<Transcript>>();
@@ -96,17 +116,13 @@ export class PaneHistory {
 		const running = this.reading.get(key);
 		if (running) return running;
 		const work = (async () => {
-			const result = await request<{ read?: { text?: string } }>(socketPathFor(session), 'pane.read', {
-				pane_id: paneId,
-				source: 'recent_unwrapped',
-				format: 'ansi',
-				lines: READ_LINES
-			});
-			const latest = (result.read?.text ?? '').split(/\r?\n/);
+			const latest = (await this.read(session, paneId, READ_LINES)).split(/\r?\n/);
 			// A trailing newline leaves an empty last element that isn't a line.
 			if (latest.length > 1 && latest.at(-1) === '') latest.pop();
 			const previous = this.transcripts.get(key);
-			const next: Transcript = { lines: mergeLines(previous?.lines ?? [], latest), readAt: Date.now() };
+			const merged = mergeLines(previous?.lines ?? [], latest, Infinity);
+			const cut = Math.max(0, merged.length - HISTORY_LINES);
+			const next: Transcript = { lines: merged.slice(cut), readAt: Date.now(), dropped: (previous?.dropped ?? 0) + cut };
 			this.transcripts.delete(key); // Re-insert as most recently used.
 			this.transcripts.set(key, next);
 			while (this.transcripts.size > MAX_PANES) this.transcripts.delete(this.transcripts.keys().next().value!);
@@ -116,10 +132,16 @@ export class PaneHistory {
 		return work;
 	}
 
-	/** The pane's history, freshly merged: every kept line, oldest first. */
-	async get(session: string, paneId: string) {
+	/**
+	 * The pane's history, freshly merged, oldest first: every kept line, or the
+	 * last `tail` of them. `from` is the first returned line's number and `total`
+	 * one past the last's (see Transcript).
+	 */
+	async get(session: string, paneId: string, tail?: number) {
 		const t = await this.refresh(session, paneId);
-		return { lines: t.lines, readAt: t.readAt, limit: HISTORY_LINES };
+		const lines = tail !== undefined && tail < t.lines.length ? t.lines.slice(-tail) : t.lines;
+		const total = t.dropped + t.lines.length;
+		return { lines, from: total - lines.length, total, readAt: t.readAt, limit: HISTORY_LINES };
 	}
 
 	/** Forgets panes of a session (it stopped or went away). */

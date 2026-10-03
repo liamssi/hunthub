@@ -397,7 +397,11 @@ export class HerdrGateway {
 				if (typeof paneId !== 'string' || !/^[A-Za-z0-9:_.-]{1,64}$/.test(paneId)) {
 					throw new HerdrError('invalid_params', 'Invalid pane.');
 				}
-				return this.history.get(session, paneId);
+				const tail = params.tail;
+				if (tail !== undefined && (typeof tail !== 'number' || !Number.isInteger(tail) || tail < 1)) {
+					throw new HerdrError('invalid_params', 'Invalid tail.');
+				}
+				return this.history.get(session, paneId, tail);
 			}
 			case AGENT_LAUNCH:
 				return this.launch(session, params);
