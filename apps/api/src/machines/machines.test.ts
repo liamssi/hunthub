@@ -267,6 +267,36 @@ describe('herdr reports', () => {
 		conn.ws.close();
 	});
 
+	test('browsers get each changed session on its own, and nothing for an unchanged report', async () => {
+		const { credential, machineId } = await enrolledMachine();
+		const live = new WebSocket(`${base.replace('http', 'ws')}/api/live`, { headers: { cookie: adminCookie, origin: base } } as any);
+		const seen: any[] = [];
+		live.onmessage = (e) => {
+			const msg = JSON.parse(String(e.data));
+			if (msg.machineId === machineId && msg.type.startsWith('machine.herdr')) seen.push(msg);
+		};
+		await new Promise<void>((resolve) => (live.onopen = () => resolve()));
+		live.send(JSON.stringify({ type: 'subscribe', topic: `machine:${machineId}` }));
+		await Bun.sleep(50);
+
+		const conn = connectHerdrRunner(credential);
+		await waitFor(() => conn.messages.length > 0);
+		const report = (name: string, label = 'ws-one') =>
+			conn.ws.send(JSON.stringify({ type: 'herdr.session', session: { name, state: 'running', snapshot: { ...snapshot, workspaces: [{ ...snapshot.workspaces[0], label }] } } }));
+		report('main');
+		report('main');
+		report('other');
+		report('main', 'renamed');
+		conn.ws.send(JSON.stringify({ type: 'herdr.session.removed', name: 'other' }));
+		await waitFor(() => seen.some((m) => m.type === 'machine.herdr.session.removed'));
+
+		const types = seen.map((m) => (m.type === 'machine.herdr.session' ? `${m.session.name}:${m.session.workspaces[0].label}` : m.type));
+		// The connect sends the whole (empty) view; then one message per change.
+		expect(types).toEqual(['machine.herdr', 'main:ws-one', 'other:ws-one', 'main:renamed', 'machine.herdr.session.removed']);
+		live.close();
+		conn.ws.close();
+	});
+
 	test('pane output is fetched through the runner', async () => {
 		const { credential, machineId } = await enrolledMachine();
 		const conn = connectHerdrRunner(credential);

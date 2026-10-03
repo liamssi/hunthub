@@ -1,6 +1,6 @@
 // Every machine and every Herdr session, kept live for the whole app: the
 // explorer, the sidebar's pins and the multi-session workspace all read it.
-import type { AgentView, Machine, MachineHerdrView, PaneView, SessionView, TabView, WorkspaceView } from '@hunthub/shared/machines';
+import { applyHerdrMessage, type AgentView, type Machine, type MachineHerdrView, type PaneView, type SessionView, type TabView, type WorkspaceView } from '@hunthub/shared/machines';
 import { subscribeLive } from './live';
 import { applyLive } from './machines';
 
@@ -43,7 +43,9 @@ export function useFleet(): () => void {
 			if (message.type === 'machine.removed') delete fleet.herdr[message.machineId];
 		});
 		const offHerdr = subscribeLive('agents', (message) => {
-			if (message.type === 'machine.herdr') fleet.herdr[message.machineId] = message.herdr;
+			if (message.type !== 'machine.herdr' && message.type !== 'machine.herdr.session' && message.type !== 'machine.herdr.session.removed') return;
+			const id = message.machineId;
+			fleet.herdr[id] = applyHerdrMessage(fleet.herdr[id] ?? { supported: true, sessions: [] }, id, message);
 		});
 		stop = () => {
 			offMachines();

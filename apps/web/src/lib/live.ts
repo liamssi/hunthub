@@ -32,6 +32,8 @@ function topicsOf(message: LiveServerMessage): LiveTopic[] {
 		case 'enroll.completed':
 			return ['machines'];
 		case 'machine.herdr':
+		case 'machine.herdr.session':
+		case 'machine.herdr.session.removed':
 			return ['agents', `machine:${message.machineId}`];
 		case 'attention':
 			return ['agents'];

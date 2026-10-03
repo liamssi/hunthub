@@ -6,7 +6,7 @@
 	import SquareIcon from '@lucide/svelte/icons/square';
 	import TerminalIcon from '@lucide/svelte/icons/square-terminal';
 	import TrashIcon from '@lucide/svelte/icons/trash-2';
-	import type { Machine, MachineHerdrView, SessionView } from '@hunthub/shared/machines';
+	import { applyHerdrMessage, type Machine, type MachineHerdrView, type SessionView } from '@hunthub/shared/machines';
 	import StatusBadge from '$lib/components/agents/status-badge.svelte';
 	import ConfirmDialog from '$lib/components/console/confirm-dialog.svelte';
 	import FormDialog, { type FormField } from '$lib/components/console/form-dialog.svelte';
@@ -27,7 +27,7 @@
 	let herdr = $derived<MachineHerdrView>(data.herdr);
 	$effect(() =>
 		subscribeLive(`machine:${data.machine.id}`, (message) => {
-			if (message.type === 'machine.herdr' && message.machineId === machine.id) herdr = message.herdr;
+			herdr = applyHerdrMessage(herdr, machine.id, message);
 			const next = applyLive(machine, message);
 			if (next) machine = next;
 		})

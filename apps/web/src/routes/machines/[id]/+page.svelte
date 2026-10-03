@@ -2,7 +2,7 @@
 	import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
 	import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
 	import { CONSOLE_POLICY_INFO } from '@hunthub/shared/console';
-	import type { Machine, MachineHerdrView } from '@hunthub/shared/machines';
+	import { applyHerdrMessage, type Machine, type MachineHerdrView } from '@hunthub/shared/machines';
 	import SessionsCard from '$lib/components/agents/sessions-card.svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -25,7 +25,7 @@
 
 	$effect(() =>
 		subscribeLive(`machine:${data.machine.id}`, (message) => {
-			if (message.type === 'machine.herdr' && message.machineId === machine.id) herdr = message.herdr;
+			herdr = applyHerdrMessage(herdr, machine.id, message);
 			const next = applyLive(machine, message);
 			if (next) machine = next;
 			else goto('/machines');

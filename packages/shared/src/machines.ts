@@ -109,6 +109,31 @@ export type MachineHerdrView = {
 	sessions: SessionView[];
 };
 
+/** Sessions in the order they're shown: "default" first, then by name. */
+export function compareSessions(a: SessionView, b: SessionView): number {
+	return a.name === 'default' ? -1 : b.name === 'default' ? 1 : a.name.localeCompare(b.name);
+}
+
+/**
+ * A machine's Herdr view after a live message about it; the same object when the
+ * message doesn't change it. Sessions are sent one at a time as they change.
+ */
+export function applyHerdrMessage(herdr: MachineHerdrView, machineId: string, message: LiveServerMessage): MachineHerdrView {
+	if (!('machineId' in message) || message.machineId !== machineId) return herdr;
+	switch (message.type) {
+		case 'machine.herdr':
+			return message.herdr;
+		case 'machine.herdr.session': {
+			const others = herdr.sessions.filter((s) => s.name !== message.session.name);
+			return { ...herdr, sessions: [...others, message.session].sort(compareSessions) };
+		}
+		case 'machine.herdr.session.removed':
+			return { ...herdr, sessions: herdr.sessions.filter((s) => s.name !== message.session) };
+		default:
+			return herdr;
+	}
+}
+
 export type StatsRange = '1h' | '24h' | '7d' | '30d' | '1y';
 
 export type StatsPoint = {
@@ -168,6 +193,9 @@ export type LiveServerMessage =
 	| { type: 'machine.stats'; machineId: string; sample: StatsSample }
 	| { type: 'enroll.completed'; tokenId: string; machineId: string }
 	| { type: 'machine.herdr'; machineId: string; herdr: MachineHerdrView }
+	/** One session changed (or appeared); the rest of the machine's view is unchanged. */
+	| { type: 'machine.herdr.session'; machineId: string; session: SessionView }
+	| { type: 'machine.herdr.session.removed'; machineId: string; session: string }
 	| { type: 'attention'; event: AttentionEvent }
 	| { type: 'pong'; id: number }
 	| { type: 'error'; message: string };
