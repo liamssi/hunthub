@@ -11,6 +11,36 @@ import { encryptCredential } from '../lib/credentials';
 import { HackerOneAuthError, verifyCredentials } from './hackerone';
 import { deleteUnseenPrograms, fetchScopeNow, syncAccount, syncProgress } from './sync';
 
+// Logos by source URL (the URL changes when the logo does), least recently used dropped first.
+const logos = new Map<string, { type: string; body: ArrayBuffer }>();
+const LOGO_CACHE = 2000;
+const LOGO_MAX_BYTES = 512 * 1024;
+const logoFetches = new Map<string, Promise<{ type: string; body: ArrayBuffer } | null>>();
+
+function cachedLogo(source: string) {
+	const hit = logos.get(source);
+	if (hit) {
+		logos.delete(source);
+		logos.set(source, hit);
+		return Promise.resolve(hit);
+	}
+	const running = logoFetches.get(source);
+	if (running) return running;
+	const work = (async () => {
+		const res = await fetch(source, { signal: AbortSignal.timeout(10_000), redirect: 'error' }).catch(() => null);
+		const type = res?.headers.get('content-type') ?? '';
+		if (!res?.ok || !/^image\/(png|jpeg|gif|webp|avif)$/.test(type.split(';')[0]!.trim())) return null;
+		const body = await res.arrayBuffer();
+		if (body.byteLength > LOGO_MAX_BYTES) return null;
+		const logo = { type: type.split(';')[0]!.trim(), body };
+		logos.set(source, logo);
+		while (logos.size > LOGO_CACHE) logos.delete(logos.keys().next().value!);
+		return logo;
+	})().finally(() => logoFetches.delete(source));
+	logoFetches.set(source, work);
+	return work;
+}
+
 const toAccount = (row: typeof platformAccount.$inferSelect): PlatformAccountView => ({
 	platform: row.platform as Platform,
 	username: row.username,
@@ -92,14 +122,45 @@ const summaryColumns = {
 	inScope: sql<number>`(select count(*)::int from ${programScope} s where s.program_id = ${program.id} and s.eligible_for_submission)`,
 	bountyAssets: sql<number>`(select count(*)::int from ${programScope} s where s.program_id = ${program.id} and s.eligible_for_submission and s.eligible_for_bounty)`,
 	lastChangeAt: sql<string | null>`(select max(e.at) from ${programEvent} e where e.program_id = ${program.id})`,
+	raw: program.raw,
+	assetCounts: sql<Record<string, number>>`coalesce((select jsonb_object_agg(t.asset_type, t.n) from (select s.asset_type, count(*)::int n from ${programScope} s where s.program_id = ${program.id} and s.eligible_for_submission group by s.asset_type) t), '{}'::jsonb)`,
+	maxSeverity: sql<string | null>`(select s.max_severity from ${programScope} s where s.program_id = ${program.id} and s.eligible_for_submission and s.max_severity is not null order by array_position(array['critical','high','medium','low','none'], s.max_severity) limit 1)`,
 	assetTypes: sql<string[]>`coalesce((select array_agg(distinct s.asset_type order by s.asset_type) from ${programScope} s where s.program_id = ${program.id} and s.eligible_for_submission), '{}')`
 };
 
 type SummaryRow = { [K in keyof typeof summaryColumns]: unknown };
 
+/** Logos HackerOne serves; nothing else is fetched on a program's behalf. */
+const LOGO_HOST = /(^|\.)hackerone-user-content\.com$/;
+
+function logoSource(raw: Record<string, unknown>): string | null {
+	const pic = raw.profile_picture;
+	if (typeof pic !== 'string') return null;
+	try {
+		const url = new URL(pic);
+		return url.protocol === 'https:' && LOGO_HOST.test(url.hostname) ? url.href : null;
+	} catch {
+		return null;
+	}
+}
+
 function toSummary(r: SummaryRow): ProgramSummary {
 	const platform = r.platform as Platform;
+	const raw = (r.raw ?? {}) as Record<string, unknown>;
+	const launched = typeof raw.started_accepting_at === 'string' ? raw.started_accepting_at : null;
 	return {
+		assetCounts: (r.assetCounts ?? {}) as Record<string, number>,
+		maxSeverity: (r.maxSeverity as string | null) ?? null,
+		logo: logoSource(raw) ? `/api/programs/${r.id}/logo` : null,
+		launchedAt: launched,
+		currency: typeof raw.currency === 'string' ? raw.currency : null,
+		flags: {
+			goldStandard: raw.gold_standard_safe_harbor === true,
+			triaged: raw.triage_active === true,
+			fastPayments: raw.fast_payments === true,
+			openScope: raw.open_scope === true,
+			bountySplitting: raw.allows_bounty_splitting === true
+		},
 		id: r.id as number,
 		platform,
 		handle: r.handle as string,
@@ -150,6 +211,20 @@ export const programRoutes = new Hono<{ Variables: AuthVariables }>()
 		const limit = Math.min(200, Math.max(1, Number(c.req.query('limit')) || 100));
 		const before = Number(c.req.query('before')) || undefined;
 		return c.json({ events: await eventsFor(c.get('user').id, { limit, before }) });
+	})
+	// The program's logo, fetched from HackerOne once and kept in memory (logos rarely change).
+	.get('/:id{[0-9]+}/logo', async (c) => {
+		const id = Number(c.req.param('id'));
+		const [row] = await db
+			.select({ raw: program.raw })
+			.from(program)
+			.innerJoin(programAccess, and(eq(programAccess.programId, program.id), eq(programAccess.userId, c.get('user').id)))
+			.where(eq(program.id, id));
+		const source = row ? logoSource(row.raw as Record<string, unknown>) : null;
+		if (!source) return c.json({ error: 'not_found' }, 404);
+		const logo = await cachedLogo(source);
+		if (!logo) return c.json({ error: 'unavailable' }, 502);
+		return c.body(logo.body, 200, { 'content-type': logo.type, 'cache-control': 'private, max-age=86400' });
 	})
 	.get('/:id{[0-9]+}', async (c) => {
 		const userId = c.get('user').id;

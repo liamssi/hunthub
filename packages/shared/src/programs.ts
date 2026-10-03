@@ -51,6 +51,28 @@ export type ProgramSummary = {
 	url: string;
 	/** When a change was last recorded (scope, policy, rewards); null if none yet. */
 	lastChangeAt: string | null;
+	/** In-scope assets per asset type, e.g. { URL: 13, WILDCARD: 2 }. */
+	assetCounts: Record<string, number>;
+	/** The highest max severity among in-scope assets. */
+	maxSeverity: string | null;
+	/** The program's logo, served (and cached) by the hub; null without one. */
+	logo: string | null;
+	/** When it started taking reports. */
+	launchedAt: string | null;
+	currency: string | null;
+	flags: ProgramFlags;
+};
+
+/** What the platform says about how the program runs. */
+export type ProgramFlags = {
+	/** Gold Standard Safe Harbor. */
+	goldStandard: boolean;
+	/** Reports are triaged by HackerOne. */
+	triaged: boolean;
+	fastPayments: boolean;
+	/** Reports on assets outside the listed scope are considered. */
+	openScope: boolean;
+	bountySplitting: boolean;
 };
 
 export type ProgramScopeView = {

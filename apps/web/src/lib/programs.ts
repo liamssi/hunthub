@@ -94,3 +94,16 @@ export function isOpportunity(e: ProgramEvent): boolean {
 	if (e.kind === 'details_changed') return d.offersBounties?.after === true || d.submissionState?.after === 'open';
 	return false;
 }
+
+const DAY = 24 * 3600 * 1000;
+
+/** Changed in the last week. */
+export const isRecentlyChanged = (p: { lastChangeAt: string | null }, now = Date.now()) => p.lastChangeAt !== null && now - new Date(p.lastChangeAt).getTime() < 7 * DAY;
+
+/** Started taking reports in the last month. */
+export const isNewProgram = (p: { launchedAt: string | null }, now = Date.now()) => p.launchedAt !== null && now - new Date(p.launchedAt).getTime() < 30 * DAY;
+
+export const severityLabel = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** Severity order, most severe first (for sorting). */
+export const severityRank = (s: string | null) => (s ? ['critical', 'high', 'medium', 'low', 'none'].indexOf(s) : 9);
