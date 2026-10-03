@@ -60,6 +60,7 @@
 	import { appearance, themeColors, workspaceVars } from '$lib/terminal-appearance.svelte';
 	import { cn } from '$lib/utils.js';
 	import FileExplorer, { type OpenFile } from './file-explorer.svelte';
+	import { fileRoots } from '$lib/files';
 	import FileViewer from './file-viewer.svelte';
 	import HistoryPanel from './history-panel.svelte';
 	import TerminalView, { type TerminalMode, type TerminalState, type TerminalTransport } from './terminal-view.svelte';
@@ -720,22 +721,21 @@
 	}
 	/** A folder asked for explicitly ("Browse files here"); otherwise the explorer follows the space. */
 	let browseRoot = $state<string | null>(null);
-	const preferredRoot = $derived.by(() => {
-		if (browseRoot) return browseRoot;
-		if (space?.worktree) return space.worktree.checkoutPath;
+	/** The explorer shows the active terminal's current folder (following `cd`), else the space's checkout. */
+	const filesPaneId = $derived.by(() => {
 		const paneId = tab ? activePane[tab.id] : undefined;
-		const pane = tab?.panes.find((p) => p.id === paneId) ?? space?.tabs[0]?.panes[0];
-		return pane?.cwd ?? null;
+		return (tab?.panes.find((p) => p.id === paneId) ?? tab?.panes[0] ?? space?.tabs[0]?.panes[0])?.id ?? null;
 	});
 	// Moving to another space follows it again.
 	$effect(() => {
 		void space?.id;
 		browseRoot = null;
 	});
-	function browseHere(paneId: string) {
-		const cwd = tabs.flatMap((t) => t.panes).find((p) => p.id === paneId)?.cwd;
-		browseRoot = cwd ?? null;
+	async function browseHere(paneId: string) {
 		setFilesOpen(true);
+		// The terminal's folder right now (it may have changed since the last report).
+		const live = await fileRoots(machineId, session.name, paneId);
+		browseRoot = (live.ok ? live.value.cwd : null) ?? tabs.flatMap((t) => t.panes).find((p) => p.id === paneId)?.cwd ?? null;
 	}
 	async function terminalIn(path: string) {
 		if (!space) return;
@@ -1589,7 +1589,9 @@
 				<FileExplorer
 					{machineId}
 					session={session.name}
-					{preferredRoot}
+					pinnedRoot={browseRoot}
+					spaceRoot={space?.worktree?.checkoutPath ?? null}
+					paneId={filesPaneId}
 					selected={openFile}
 					onopen={openFileTab}
 					onterminal={terminalIn}

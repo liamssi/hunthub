@@ -31,8 +31,9 @@ async function query<T>(machineId: string, session: string, method: string, para
 	return out.ok ? { ok: true, value: out.result as T } : { ok: false, code: out.code, message: out.message };
 }
 
-export const fileRoots = (machineId: string, session: string) =>
-	query<{ roots: FileRoot[] }>(machineId, session, 'hunthub.fs.roots', {});
+/** The folders files can be browsed in; with a pane, also that terminal's current folder (it follows `cd`). */
+export const fileRoots = (machineId: string, session: string, paneId?: string | null) =>
+	query<{ roots: FileRoot[]; cwd?: string | null }>(machineId, session, 'hunthub.fs.roots', paneId ? { pane_id: paneId } : {});
 
 export const listFolder = (machineId: string, session: string, root: string, path: string) =>
 	query<FileListing>(machineId, session, 'hunthub.fs.list', { root, path });

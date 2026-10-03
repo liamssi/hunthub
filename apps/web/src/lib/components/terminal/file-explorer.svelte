@@ -36,7 +36,9 @@
 	let {
 		machineId,
 		session,
-		preferredRoot,
+		pinnedRoot,
+		spaceRoot,
+		paneId,
 		selected,
 		onopen,
 		onterminal,
@@ -44,8 +46,12 @@
 	}: {
 		machineId: string;
 		session: string;
-		/** A folder to start in (e.g. the current space's checkout or a pane's folder). */
-		preferredRoot: string | null;
+		/** A folder asked for explicitly ("Browse files here"). */
+		pinnedRoot: string | null;
+		/** The space's worktree checkout, when there's nothing better to show. */
+		spaceRoot: string | null;
+		/** The active terminal: the explorer shows its current folder and follows it when it changes (`cd`). */
+		paneId: string | null;
 		/** The file open in the viewer, highlighted here. */
 		selected: OpenFile | null;
 		onopen: (file: OpenFile) => void;
@@ -53,6 +59,9 @@
 		onterminal: (path: string) => void;
 		onclose: () => void;
 	} = $props();
+
+	/** How often the active terminal's folder is checked. */
+	const FOLLOW_MS = 3000;
 
 	type Folder = { entries: FileEntry[]; truncated: boolean; total: number; error: string | null; loading: boolean };
 
@@ -66,15 +75,24 @@
 	let focusedPath = $state<string | null>(null);
 	let tree = $state<HTMLElement | null>(null);
 
+	/** The active terminal's current folder, as last read. */
+	let liveCwd = $state<string | null>(null);
+
 	async function loadRoots() {
-		const out = await fileRoots(machineId, session);
+		const pane = paneId;
+		const out = await fileRoots(machineId, session, pane);
 		if (!out.ok) {
 			rootsError = out.message;
 			return;
 		}
 		rootsError = null;
 		roots = out.value.roots;
-		if (!root || !roots.some((r) => r.path === root)) pickRoot(preferredRoot);
+		const cwd = pane === paneId ? (out.value.cwd ?? null) : liveCwd;
+		// The terminal moved to another folder (or another terminal became active): follow it.
+		if (cwd && cwd !== liveCwd) {
+			liveCwd = cwd;
+			pickRoot(cwd);
+		} else if (!root || !roots.some((r) => r.path === root)) pickRoot(pinnedRoot ?? liveCwd ?? spaceRoot);
 	}
 
 	function pickRoot(preferred: string | null) {
@@ -104,15 +122,29 @@
 		for (const path of Object.keys(expanded)) if (expanded[path]) void load(path);
 	}
 
+	// Another session or another active terminal: read its folder now.
 	$effect(() => {
 		void session;
+		void paneId;
 		untrack(() => void loadRoots());
 	});
-	// Follow the workspace: when the preferred folder changes (another space), switch to it.
-	// Only that change counts; loading folders or picking one by hand must not undo the choice.
+	// A `cd` raises no event, so the terminal's folder is checked every few seconds while
+	// the explorer is open (and the page is visible).
 	$effect(() => {
-		const p = preferredRoot;
-		untrack(() => roots.length && pickRoot(p));
+		const t = setInterval(() => {
+			if (document.visibilityState === 'visible') void loadRoots();
+		}, FOLLOW_MS);
+		return () => clearInterval(t);
+	});
+	// "Browse files here" or another space: show that. Whatever happened last wins: a later
+	// `cd` moves the explorer again, and picking a folder by hand holds until then.
+	$effect(() => {
+		const p = pinnedRoot;
+		untrack(() => p && roots.length && pickRoot(p));
+	});
+	$effect(() => {
+		const p = spaceRoot;
+		untrack(() => p && roots.length && !pinnedRoot && !liveCwd && pickRoot(p));
 	});
 
 	function toggle(entry: FileEntry) {

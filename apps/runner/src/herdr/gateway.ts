@@ -56,6 +56,8 @@ const LIFECYCLE_EVENTS = [
 	'layout.updated'
 ];
 
+type LivePane = { pane_id?: string; workspace_id?: string; cwd?: string; foreground_cwd?: string };
+
 /** Slow full re-check, in case an event was missed. */
 const RECONCILE_MS = 30_000;
 /** Events often come in bursts (e.g. creating a workspace); coalesce refreshes. */
@@ -384,14 +386,35 @@ export class HerdrGateway {
 		}
 	}
 
+	/**
+	 * The folders files may be browsed in: worktree checkouts and the panes' folders.
+	 * Panes' current folders are read from Herdr each time (a `cd` raises no event, so
+	 * the snapshot can be up to a reconcile behind); folders from the last snapshot
+	 * stay allowed, so files opened before a `cd` keep working.
+	 */
+	private async fileRoots(session: string) {
+		const snapshot = (this.watchers.get(session)?.snapshot ?? {}) as { workspaces?: unknown[]; panes?: unknown[] };
+		let live: LivePane[] = [];
+		try {
+			live = (await request<{ panes?: LivePane[] }>(socketPathFor(session), 'pane.list', {})).panes ?? [];
+		} catch {
+			// Herdr unreachable: the snapshot's folders still apply.
+		}
+		return { roots: rootsFromSnapshot({ workspaces: snapshot.workspaces, panes: [...live, ...(snapshot.panes ?? [])] }), panes: live };
+	}
+
 	private async execute(session: string, method: string, params: Record<string, unknown>): Promise<unknown> {
 		switch (method) {
-			case FS_ROOTS:
-				return { roots: rootsFromSnapshot(this.watchers.get(session)?.snapshot) };
+			case FS_ROOTS: {
+				const { roots, panes } = await this.fileRoots(session);
+				// The asked-for terminal's folder right now (it follows `cd`), for the explorer to show.
+				const pane = typeof params.pane_id === 'string' ? panes.find((x) => x.pane_id === params.pane_id) : undefined;
+				return { roots, cwd: pane?.foreground_cwd || pane?.cwd || null };
+			}
 			case FS_LIST:
-				return listFolder(rootsFromSnapshot(this.watchers.get(session)?.snapshot), params);
+				return listFolder((await this.fileRoots(session)).roots, params);
 			case FS_READ:
-				return readFile(rootsFromSnapshot(this.watchers.get(session)?.snapshot), params);
+				return readFile((await this.fileRoots(session)).roots, params);
 			case PANE_HISTORY: {
 				const paneId = params.pane_id;
 				if (typeof paneId !== 'string' || !/^[A-Za-z0-9:_.-]{1,64}$/.test(paneId)) {
