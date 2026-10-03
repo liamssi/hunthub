@@ -9,6 +9,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { validateSessionName } from '@hunthub/shared/console';
 import { DEFAULT_SESSION, HerdrError, request, socketPathFor } from './client';
+import { herdrBinary } from './binary';
 
 const UNIT_TEMPLATE = 'hunthub-herdr@.service';
 const unitName = (session: string) => `hunthub-herdr@${session}.service`;
@@ -71,7 +72,7 @@ export async function startSession(session: string): Promise<{ via: 'systemd' | 
 	const invalid = validateSessionName(session);
 	if (invalid) throw new HerdrError('invalid_name', invalid);
 	if (await isRunning(session)) throw new HerdrError('already_running', `Session ${session} is already running.`);
-	const herdrPath = Bun.which('herdr');
+	const herdrPath = herdrBinary();
 	if (!herdrPath) throw new HerdrError('herdr_missing', 'Herdr is not installed on this machine.');
 
 	let via: 'systemd' | 'detached';
@@ -113,6 +114,6 @@ export async function deleteSession(session: string): Promise<void> {
 	if (session === DEFAULT_SESSION) throw new HerdrError('not_allowed', 'The default session cannot be deleted.');
 	if (await isRunning(session)) throw new HerdrError('running', `Session ${session} is running; stop it first.`);
 	// Herdr's own command enforces the same rules and knows its storage layout.
-	const result = run(['herdr', 'session', 'delete', session]);
+	const result = run([herdrBinary() ?? 'herdr', 'session', 'delete', session]);
 	if (!result.ok) throw new HerdrError('delete_failed', result.err || result.out || 'herdr session delete failed.');
 }

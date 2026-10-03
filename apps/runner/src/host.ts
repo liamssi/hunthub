@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import type { HostInfo } from '@hunthub/shared/runner-protocol';
+import { herdrBinary } from './herdr/binary';
 
 function osName(): string {
 	try {
@@ -25,7 +26,9 @@ function privateIps(): string[] {
 
 function herdrVersion(): string | null {
 	try {
-		const result = Bun.spawnSync(['herdr', '--version'], { stdout: 'pipe', stderr: 'ignore' });
+		const herdr = herdrBinary();
+		if (!herdr) return null;
+		const result = Bun.spawnSync([herdr, '--version'], { stdout: 'pipe', stderr: 'ignore' });
 		if (!result.success) return null;
 		return result.stdout.toString().trim().replace(/^herdr\s+/, '') || null;
 	} catch {

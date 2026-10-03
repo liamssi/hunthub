@@ -21,6 +21,7 @@ import { consolePolicy } from '../policy';
 import { EndpointTerminalSession } from '../vendor/roamgate/endpoint-terminal-session';
 import type { FrameData } from '../vendor/roamgate/thin-client';
 import { FramePump } from './frame-pump';
+import { herdrBinary } from './binary';
 import { DEFAULT_SESSION, socketPathFor } from './client';
 
 type Open = Extract<ServerMessage, { type: 'term.open' }>;
@@ -99,11 +100,23 @@ export class TerminalManager {
 		if (msg.view === 'session') {
 			// Herdr's client would start a stopped session itself, outside the runner's lifecycle management.
 			if (!this.sessionRunning(msg.session)) return fail(`Session ${msg.session} is stopped. Start it first.`);
-			this.channels.set(msg.channel, this.openSession(msg));
+			this.start(msg, () => this.openSession(msg));
 			return;
 		}
 		if (!TARGET.test(msg.target)) return fail('Invalid pane.');
-		this.channels.set(msg.channel, msg.transport === 'native' ? this.openNative(msg) : this.openCli(msg));
+		this.start(msg, () => (msg.transport === 'native' ? this.openNative(msg) : this.openCli(msg)));
+	}
+
+	/** Opens a channel; a failure to start (e.g. Herdr missing) closes it with the reason instead of leaving the browser waiting. */
+	private start(msg: Open, open: () => Channel) {
+		try {
+			this.channels.set(msg.channel, open());
+		} catch (e) {
+			this.controlling.delete(msg.channel);
+			this.log(`terminal ${msg.channel} failed to start: ${e}`);
+			const missing = msg.transport !== 'native' && !herdrBinary();
+			this.send({ type: 'term.closed', channel: msg.channel, reason: missing ? 'Herdr is not installed on this machine.' : `Couldn't open the terminal: ${(e as Error).message}` });
+		}
 	}
 
 	input(channel: string, bytes: string) {
@@ -135,7 +148,7 @@ export class TerminalManager {
 	}
 
 	private openSession(msg: Open): Channel {
-		const args = ['herdr'];
+		const args = [herdrBinary() ?? 'herdr'];
 		if (msg.session !== DEFAULT_SESSION) args.push('--session', msg.session);
 		// Drop Herdr's per-pane variables in case the runner itself runs inside a Herdr pane.
 		const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('HERDR_')));
@@ -297,7 +310,7 @@ export class TerminalManager {
 	}
 
 	private openCli(msg: Open): Channel {
-		const args = ['herdr'];
+		const args = [herdrBinary() ?? 'herdr'];
 		if (msg.session !== DEFAULT_SESSION) args.push('--session', msg.session);
 		args.push('terminal', 'session', msg.mode, msg.target, '--cols', String(msg.cols), '--rows', String(msg.rows));
 		if (msg.mode === 'control' && msg.takeover) args.push('--takeover');
