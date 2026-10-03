@@ -19,7 +19,7 @@
 		untrack(() => openTab(tab));
 	});
 
-	const section = $derived<ProgramSection>((['scope', 'policy', 'changes'] as const).find((t) => t === page.url.searchParams.get('tab')) ?? 'scope');
+	const section = $derived<ProgramSection>((['scope', 'policy', 'changes', 'notes'] as const).find((t) => t === page.url.searchParams.get('tab')) ?? 'scope');
 	function setSection(t: ProgramSection) {
 		const url = new URL(page.url);
 		if (t === 'scope') url.searchParams.delete('tab');

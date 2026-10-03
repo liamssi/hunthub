@@ -38,13 +38,17 @@
 	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
 	import { formatRelative } from '$lib/format';
 	import { openTab } from '$lib/program-tabs.svelte';
+	import { forgetEdits, knownTags, learnTags, withMe } from '$lib/program-me.svelte';
+	import type { AssetMatch } from '@hunthub/shared/programs';
 	import { assetTypeLabel, isNewProgram, isRecentlyChanged, severityLabel, severityRank } from '$lib/programs';
 	import { cn } from '$lib/utils.js';
 
 	let { data } = $props();
 
 	let account = $derived<PlatformAccountView | null>(data.account);
-	const programs = $derived<ProgramSummary[]>(data.programs);
+	// With your latest edits (bookmarks, tags…) applied at once.
+	const programs = $derived<ProgramSummary[]>(data.programs.map(withMe));
+	$effect(() => learnTags(data.programs.flatMap((p) => p.me.tags)));
 	let connectOpen = $state(false);
 	let disconnectOpen = $state(false);
 
@@ -67,6 +71,7 @@
 			const done = !next?.sync;
 			if (done || (next?.sync && next.sync.scopesDone - lastScopes >= 25) || (next?.sync?.phase === 'scopes' && programs.length === 0)) {
 				lastScopes = next?.sync?.scopesDone ?? 0;
+				forgetEdits();
 				await invalidate('app:programs');
 			}
 			account = next;
@@ -143,10 +148,25 @@
 
 	// --- Search, filters and sorting ----------------------------------------------
 
+	// Filters and sorting are remembered per browser.
+	const FILTERS_KEY = 'hunthub.programs.filters';
+	type Saved = { rewards?: string; assetType?: string; sort?: string; quick?: string[]; tags?: string[] };
+	const remembered: Saved = (() => {
+		if (!browser) return {};
+		try {
+			return JSON.parse(localStorage.getItem(FILTERS_KEY) ?? '{}') as Saved;
+		} catch {
+			return {};
+		}
+	})();
+
 	let query = $state('');
-	let rewards = $state<'all' | 'bounty' | 'vdp'>('all');
-	let assetType = $state('any');
-	let sort = $state<'name' | 'changed' | 'newest' | 'scope' | 'severity' | 'mine'>('name');
+	let rewards = $state<'all' | 'bounty' | 'vdp'>((['all', 'bounty', 'vdp'] as const).find((v) => v === remembered.rewards) ?? 'all');
+	let assetType = $state(remembered.assetType ?? 'any');
+	let sort = $state<'name' | 'changed' | 'newest' | 'scope' | 'severity' | 'mine'>(
+		(['name', 'changed', 'newest', 'scope', 'severity', 'mine'] as const).find((v) => v === remembered.sort) ?? 'name'
+	);
+	let tags = $state<string[]>(remembered.tags ?? []);
 
 	/** Quick filters, combined with AND. */
 	const QUICK = {
@@ -156,25 +176,64 @@
 		gold: { label: 'Gold Standard', test: (p: ProgramSummary) => p.flags.goldStandard },
 		triaged: { label: 'Triaged by HackerOne', test: (p: ProgramSummary) => p.flags.triaged },
 		open: { label: 'Taking reports', test: (p: ProgramSummary) => p.submissionState === 'open' },
-		bookmarked: { label: 'Bookmarked', test: (p: ProgramSummary) => p.mine.bookmarked },
-		hunted: { label: 'Reported before', test: (p: ProgramSummary) => p.mine.reports > 0 }
+		hunted: { label: 'Reported before', test: (p: ProgramSummary) => p.mine.reports > 0 },
+		notes: { label: 'With notes', test: (p: ProgramSummary) => p.me.hasNote },
+		hidden: { label: 'Hidden', test: (p: ProgramSummary) => p.me.hidden }
 	} as const;
-	type Quick = keyof typeof QUICK;
-	let quick = $state<Quick[]>([]);
+	/** Your own filters, shown first. */
+	const MINE = {
+		bookmarked: { label: 'Bookmarked', test: (p: ProgramSummary) => p.me.bookmarked },
+		unseen: { label: 'Unseen changes', test: (p: ProgramSummary) => p.me.unseen > 0 }
+	} as const;
+	const ALL = { ...MINE, ...QUICK };
+	type Quick = keyof typeof ALL;
+	let quick = $state<Quick[]>((remembered.quick ?? []).filter((q): q is Quick => q in ALL));
+	const toggleTag = (t: string) => (tags = tags.includes(t) ? tags.filter((x) => x !== t) : [...tags, t]);
+
+	$effect(() => {
+		const saved: Saved = { rewards, assetType, sort, quick, tags };
+		try {
+			localStorage.setItem(FILTERS_KEY, JSON.stringify(saved));
+		} catch {
+			// Filters just won't be remembered.
+		}
+	});
+
+	// Searching for a domain or app id also looks through every program's scope.
+	let assetMatches = $state<Map<number, string[]>>(new Map());
+	$effect(() => {
+		const q = query.trim();
+		if (q.length < 3 || !/[./:]/.test(q)) {
+			assetMatches = new Map();
+			return;
+		}
+		const t = setTimeout(async () => {
+			const res = await fetch(`/api/programs/assets?q=${encodeURIComponent(q)}`).catch(() => null);
+			if (!res?.ok || query.trim() !== q) return;
+			const { matches }: { matches: AssetMatch[] } = await res.json();
+			const by = new Map<number, string[]>();
+			for (const m of matches) by.set(m.programId, [...(by.get(m.programId) ?? []), m.identifier]);
+			assetMatches = by;
+		}, 250);
+		return () => clearTimeout(t);
+	});
 	const toggleQuick = (q: Quick) => (quick = quick.includes(q) ? quick.filter((x) => x !== q) : [...quick, q]);
-	const quickCount = (q: Quick) => programs.filter(QUICK[q].test).length;
+	const visible = $derived(programs.filter((p) => !p.me.hidden || quick.includes('hidden')));
+	const quickCount = (q: Quick) => (q === 'hidden' ? programs : visible).filter(ALL[q].test).length;
+	const tagCount = (t: string) => visible.filter((p) => p.me.tags.includes(t)).length;
 
 	const assetTypes = $derived([...new Set(programs.flatMap((p) => p.assetTypes))].sort((a, b) => assetTypeLabel(a).localeCompare(assetTypeLabel(b))));
 	const sortLabels = { name: 'Name', changed: 'Recently changed', newest: 'Newest programs', scope: 'Most assets in scope', severity: 'Highest severity', mine: 'My reports' };
 
 	const filtered = $derived.by(() => {
 		const q = query.trim().toLowerCase();
-		const list = programs.filter(
+		const list = visible.filter(
 			(p) =>
-				(!q || p.name.toLowerCase().includes(q) || p.handle.toLowerCase().includes(q)) &&
+				(!q || p.name.toLowerCase().includes(q) || p.handle.toLowerCase().includes(q) || assetMatches.has(p.id)) &&
 				(rewards === 'all' || (rewards === 'bounty') === p.offersBounties) &&
 				(assetType === 'any' || p.assetTypes.includes(assetType)) &&
-				quick.every((k) => QUICK[k].test(p))
+				quick.every((k) => ALL[k].test(p)) &&
+				tags.every((t) => p.me.tags.includes(t))
 		);
 		const byName = (a: ProgramSummary, b: ProgramSummary) => a.name.localeCompare(b.name);
 		const by = {
@@ -187,12 +246,13 @@
 		}[sort];
 		return [...list].sort(by);
 	});
-	const filtering = $derived(query.trim() !== '' || rewards !== 'all' || assetType !== 'any' || quick.length > 0);
+	const filtering = $derived(query.trim() !== '' || rewards !== 'all' || assetType !== 'any' || quick.length > 0 || tags.length > 0);
 	function clearFilters() {
 		query = '';
 		rewards = 'all';
 		assetType = 'any';
 		quick = [];
+		tags = [];
 	}
 
 	// Long lists render a page at a time.
@@ -306,7 +366,7 @@
 	<section class="flex flex-col gap-3 rounded-xl border bg-card p-4 shadow-xs" aria-label="Find programs">
 		<div class="flex flex-wrap items-center gap-2">
 			<InputGroup.Root class="min-w-0 flex-1 basis-64">
-				<InputGroup.Input bind:ref={search} bind:value={query} placeholder="Search programs by name or handle" aria-label="Search programs" />
+				<InputGroup.Input bind:ref={search} bind:value={query} placeholder="Search programs, or a domain to find who has it in scope" aria-label="Search programs" />
 				<InputGroup.Addon><SearchIcon /></InputGroup.Addon>
 				{#if query}
 					<InputGroup.Addon align="inline-end">
@@ -330,19 +390,29 @@
 			</Select.Root>
 		</div>
 		<div class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Quick filters">
+			{#snippet chip(label: string, n: number, pressed: boolean, toggle: () => void)}
+				<Toggle
+					size="sm"
+					variant="outline"
+					class="h-7 rounded-full px-3 text-xs data-[state=on]:border-primary data-[state=on]:bg-primary/10 data-[state=on]:text-primary"
+					{pressed}
+					onPressedChange={toggle}
+				>
+					{label}<span class="text-muted-foreground tabular-nums">{n}</span>
+				</Toggle>
+			{/snippet}
+			{#each Object.entries(MINE) as [key, q] (key)}
+				{@const n = quickCount(key as Quick)}
+				{#if n > 0 || quick.includes(key as Quick)}{@render chip(q.label, n, quick.includes(key as Quick), () => toggleQuick(key as Quick))}{/if}
+			{/each}
+			{#each knownTags.list as t (t)}
+				{@const n = tagCount(t)}
+				{#if n > 0 || tags.includes(t)}{@render chip(`#${t}`, n, tags.includes(t), () => toggleTag(t))}{/if}
+			{/each}
+			{#if Object.keys(MINE).some((k) => quickCount(k as Quick) > 0) || knownTags.list.length}<span class="mx-1 h-4 w-px bg-border" aria-hidden="true"></span>{/if}
 			{#each Object.entries(QUICK) as [key, q] (key)}
 				{@const n = quickCount(key as Quick)}
-				{#if n > 0 || quick.includes(key as Quick)}
-					<Toggle
-						size="sm"
-						variant="outline"
-						class="h-7 rounded-full px-3 text-xs data-[state=on]:border-primary data-[state=on]:bg-primary/10 data-[state=on]:text-primary"
-						pressed={quick.includes(key as Quick)}
-						onPressedChange={() => toggleQuick(key as Quick)}
-					>
-						{q.label}<span class="text-muted-foreground tabular-nums">{n}</span>
-					</Toggle>
-				{/if}
+				{#if n > 0 || quick.includes(key as Quick)}{@render chip(q.label, n, quick.includes(key as Quick), () => toggleQuick(key as Quick))}{/if}
 			{/each}
 			{#if filtering}<Button size="sm" variant="ghost" class="h-7 text-xs" onclick={clearFilters}>Clear all</Button>{/if}
 		</div>
@@ -410,7 +480,7 @@
 	{:else if layout === 'cards'}
 		<div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
 			{#each filtered.slice(0, shown) as p (p.id)}
-				<ProgramCard program={p} {now} selected={glance?.id === p.id} onglance={(x) => (glance = x)} onopen={open} />
+				<ProgramCard program={p} {now} selected={glance?.id === p.id} matches={assetMatches.get(p.id) ?? []} onglance={(x) => (glance = x)} onopen={open} />
 			{/each}
 		</div>
 	{:else}

@@ -116,3 +116,32 @@ export const programEvent = pgTable(
 		check('program_event_kind', sql`${t.kind} in ('added', 'scope_added', 'scope_removed', 'scope_changed', 'policy_changed', 'details_changed')`)
 	]
 );
+
+/**
+ * A user's own layer on a program, kept by HuntHub (not the platform): a
+ * bookmark, hiding it, personal tags and notes, and when they last looked at
+ * it (so changes since then show as unseen).
+ */
+export const programUser = pgTable(
+	'program_user',
+	{
+		userId: text('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		programId: bigint('program_id', { mode: 'number' })
+			.notNull()
+			.references(() => program.id, { onDelete: 'cascade' }),
+		bookmarked: boolean('bookmarked').notNull().default(false),
+		hidden: boolean('hidden').notNull().default(false),
+		tags: text('tags').array().notNull().default(sql`'{}'::text[]`),
+		note: text('note').notNull().default(''),
+		viewedAt: timestamp('viewed_at', { withTimezone: true }),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull()
+	},
+	(t) => [
+		primaryKey({ columns: [t.userId, t.programId] }),
+		index('program_user_program_idx').on(t.programId),
+		check('program_user_note_length', sql`char_length(${t.note}) <= 100000`),
+		check('program_user_tags_count', sql`cardinality(${t.tags}) <= 20`)
+	]
+);

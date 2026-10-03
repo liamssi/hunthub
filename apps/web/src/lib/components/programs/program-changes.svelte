@@ -11,7 +11,17 @@
 	import { assetTypeLabel, changeLines, describeEvent, isOpportunity } from '$lib/programs';
 	import { cn } from '$lib/utils.js';
 
-	let { events, showProgram = false }: { events: ProgramEvent[]; showProgram?: boolean } = $props();
+	let {
+		events,
+		showProgram = false,
+		newSince
+	}: {
+		events: ProgramEvent[];
+		showProgram?: boolean;
+		/** Changes after this time are marked new (null: never looked, so all are new; undefined: none marked). */
+		newSince?: string | null;
+	} = $props();
+	const isNew = (e: ProgramEvent) => newSince !== undefined && (newSince === null || e.at > newSince);
 
 	const exact = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 	const day = new Intl.DateTimeFormat(undefined, { dateStyle: 'full' });
@@ -44,6 +54,7 @@
 						<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
 							{#if isOpportunity(e)}<SparklesIcon class="size-3.5 text-primary" aria-label="New opportunity" />{/if}
 							<span class="font-medium">{describeEvent(e)}</span>
+							{#if isNew(e)}<span class="rounded bg-amber-100 px-1.5 text-xs font-medium text-amber-900 dark:bg-amber-400/20 dark:text-amber-200">new</span>{/if}
 							{#if showProgram}
 								<span class="text-muted-foreground">in</span>
 								<a class="font-medium underline-offset-2 hover:underline" href="/programs/{e.programId}">{e.programName}</a>

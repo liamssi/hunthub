@@ -41,7 +41,10 @@ const scopes: Record<string, object[]> = {
 		{ id: 2, type: 'structured-scope', attributes: { asset_type: 'WILDCARD', asset_identifier: '*.acme.test', eligible_for_bounty: false, eligible_for_submission: true, instruction: '', max_severity: 'medium' } },
 		{ id: 3, type: 'structured-scope', attributes: { asset_type: 'URL', asset_identifier: 'https://blog.acme.test', eligible_for_bounty: false, eligible_for_submission: false, instruction: 'Out of scope', max_severity: null } }
 	],
-	[secret]: [{ id: 4, type: 'structured-scope', attributes: { asset_type: 'GOOGLE_PLAY_APP_ID', asset_identifier: 'test.secret.app', eligible_for_bounty: true, eligible_for_submission: true } }]
+	[secret]: [
+		{ id: 4, type: 'structured-scope', attributes: { asset_type: 'GOOGLE_PLAY_APP_ID', asset_identifier: 'test.secret.app', eligible_for_bounty: true, eligible_for_submission: true } },
+		{ id: 6, type: 'structured-scope', attributes: { asset_type: 'WILDCARD', asset_identifier: '*.secret.test', eligible_for_bounty: true, eligible_for_submission: true } }
+	]
 };
 
 let h1: ReturnType<typeof Bun.serve>;
@@ -141,7 +144,7 @@ describe('HackerOne programs', () => {
 			mine: { reports: 2, validReports: 1, bountyEarned: 500, bookmarked: false },
 			url: `https://hackerone.com/${acme}`
 		});
-		expect(programs.find((p) => p.handle === secret)).toMatchObject({ public: false, assetTypes: ['GOOGLE_PLAY_APP_ID'] });
+		expect(programs.find((p) => p.handle === secret)).toMatchObject({ public: false, assetTypes: ['GOOGLE_PLAY_APP_ID', 'WILDCARD'] });
 	});
 
 	test('a program shows its policy and scope, in scope first', async () => {
@@ -193,6 +196,33 @@ describe('HackerOne programs', () => {
 			scopes[acme] = before;
 			changedPolicy = null;
 		}
+	});
+
+	test('your own layer: bookmark, hide, tags and notes stay yours; changes since your last look are unseen', async () => {
+		const id = (await mine('a')).find((p) => p.handle === acme)!.id;
+		const patch = (who: keyof typeof users, body: object) => api(who, `/programs/${id}/me`, { method: 'PATCH', body: JSON.stringify(body) });
+		expect((await patch('a', { bookmarked: true, tags: ['Web', 'web', 'later'], note: 'Try the **API** first.' })).status).toBe(204);
+		expect((await patch('a', { color: 'red' })).status).toBe(400);
+		const summary = async (who: keyof typeof users) => (await json(api(who, '/programs'))).programs.find((p: { id: number }) => p.id === id);
+		expect((await summary('a')).me).toMatchObject({ bookmarked: true, hidden: false, tags: ['web', 'later'], hasNote: true });
+		expect((await json(api('a', `/programs/${id}`))).program.note).toBe('Try the **API** first.');
+		// Another user who sees the program has their own (empty) layer.
+		expect((await summary('b')).me).toMatchObject({ bookmarked: false, tags: [], hasNote: false });
+
+		// The recorded changes are unseen until the program is opened.
+		expect((await summary('a')).me.unseen).toBe(5);
+		expect((await api('a', `/programs/${id}/seen`, { method: 'POST' })).status).toBe(204);
+		expect((await summary('a')).me.unseen).toBe(0);
+		expect((await summary('b')).me.unseen).toBe(5);
+	});
+
+	test('assets can be searched across programs, a host also finding its wildcard', async () => {
+		const found = async (q: string) => ((await json(api('a', `/programs/assets?q=${encodeURIComponent(q)}`))).matches as { identifier: string }[]).map((m) => m.identifier);
+		expect(await found('new.acme')).toEqual(['https://new.acme.test']);
+		expect(await found('shop.secret.test')).toEqual(['*.secret.test']);
+		expect(await found('secret.app')).toEqual(['test.secret.app']);
+		expect(await found('ac')).toEqual([]);
+		expect((await json(api('b', `/programs/assets?q=secret.app`))).matches).toEqual([]);
 	});
 
 	test('disconnecting removes the account and its programs; private ones nobody sees are deleted', async () => {

@@ -1,11 +1,24 @@
 <script lang="ts" module>
-	export type ProgramSection = 'scope' | 'policy' | 'changes';
+	export type ProgramSection = 'scope' | 'policy' | 'changes' | 'notes';
 </script>
 
 <script lang="ts">
 	// A program in full: who runs it and how, its scope (in scope first), its
 	// policy and what changed on it. Shown in a tab and in the quick look.
 	import BadgeCheckIcon from '@lucide/svelte/icons/badge-check';
+	import ClipboardCopyIcon from '@lucide/svelte/icons/clipboard-copy';
+	import DownloadIcon from '@lucide/svelte/icons/download';
+	import EyeIcon from '@lucide/svelte/icons/eye';
+	import EyeOffIcon from '@lucide/svelte/icons/eye-off';
+	import StarIcon from '@lucide/svelte/icons/star';
+	import { untrack } from 'svelte';
+	import { toast } from 'svelte-sonner';
+	import { copyText } from '$lib/clipboard';
+	import { Button } from '$lib/components/ui/button/index.js';
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
+	import { markSeen, toggleBookmark, toggleHidden, withMe } from '$lib/program-me.svelte';
+	import ProgramNotes from './program-notes.svelte';
+	import TagEditor from './tag-editor.svelte';
 	import LockIcon from '@lucide/svelte/icons/lock';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import type { Snippet } from 'svelte';
@@ -30,6 +43,42 @@
 	}: { program: ProgramDetail; section?: ProgramSection; actions?: Snippet; compact?: boolean } = $props();
 
 	const now = Date.now();
+	const me = $derived(withMe(p).me);
+
+	// Opening a program marks its changes seen; the ones that were new stay marked for this visit.
+	let seenBefore = $state<string | null>(null);
+	let seenFor = -1;
+	$effect(() => {
+		const id = p.id;
+		if (id === seenFor) return;
+		seenFor = id;
+		seenBefore = untrack(() => p.me.viewedAt);
+		void markSeen(id);
+	});
+
+	// Copying scope for tools: everything in scope, or by kind.
+	const HOSTS = new Set(['URL', 'WILDCARD', 'DOMAIN', 'API', 'IP_ADDRESS', 'CIDR']);
+	const scopeLists = $derived.by(() => {
+		const all = p.scopes.filter((s) => s.eligibleForSubmission);
+		return [
+			{ label: 'All in-scope assets', items: all.map((s) => s.identifier) },
+			{ label: 'Web: domains, URLs, IPs', items: all.filter((s) => HOSTS.has(s.assetType)).map((s) => s.identifier) },
+			{ label: 'Wildcards only', items: all.filter((s) => s.assetType === 'WILDCARD').map((s) => s.identifier) },
+			{ label: 'Bounty-eligible assets', items: all.filter((s) => s.eligibleForBounty).map((s) => s.identifier) },
+			{ label: 'Out of scope', items: p.scopes.filter((s) => !s.eligibleForSubmission).map((s) => s.identifier) }
+		].filter((l) => l.items.length);
+	});
+	async function copyList(label: string, items: string[]) {
+		if (await copyText(items.join('\n'))) toast.success(`Copied ${items.length} ${items.length === 1 ? 'asset' : 'assets'}`, { description: label });
+	}
+	function downloadScope() {
+		const lines = [`# ${p.name} (${p.url})`, `# Scope as of ${new Date(p.scopesFetchedAt ?? Date.now()).toISOString()}`, '', '# In scope', ...p.scopes.filter((s) => s.eligibleForSubmission).map((s) => s.identifier), '', '# Out of scope', ...p.scopes.filter((s) => !s.eligibleForSubmission).map((s) => s.identifier), ''];
+		const a = document.createElement('a');
+		a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/plain' }));
+		a.download = `${p.handle}-scope.txt`;
+		a.click();
+		URL.revokeObjectURL(a.href);
+	}
 	let query = $state('');
 	const matches = (s: ProgramScopeView) => {
 		const q = query.trim().toLowerCase();
@@ -62,6 +111,15 @@
 				{#if p.flags.goldStandard}<span class="flex items-center gap-1 text-xs font-medium text-foreground"><BadgeCheckIcon class="size-4 text-primary" aria-hidden="true" />Gold Standard Safe Harbor</span>{/if}
 			</div>
 			{#if features.length}<p class="text-xs text-muted-foreground">{features.join(' · ')}</p>{/if}
+			<TagEditor programId={p.id} {me} />
+		</div>
+		<div class="flex items-center gap-1">
+			<Button size="icon-sm" variant="ghost" aria-label={me.bookmarked ? 'Remove bookmark' : 'Bookmark'} aria-pressed={me.bookmarked} title={me.bookmarked ? 'Bookmarked (B)' : 'Bookmark (B)'} onclick={() => toggleBookmark({ ...p, me })}>
+				<StarIcon class={cn(me.bookmarked && 'fill-amber-400 text-amber-500')} />
+			</Button>
+			<Button size="icon-sm" variant="ghost" aria-label={me.hidden ? 'Show again' : 'Hide'} aria-pressed={me.hidden} title={me.hidden ? 'Hidden from the list (show again)' : 'Hide from the list (not interested)'} onclick={() => toggleHidden({ ...p, me })}>
+				{#if me.hidden}<EyeIcon />{:else}<EyeOffIcon />{/if}
+			</Button>
 		</div>
 		{#if actions}<div class="flex items-center gap-2">{@render actions()}</div>{/if}
 	</div>
@@ -84,7 +142,27 @@
 			<ToggleGroup.Item value="scope">Scope<span class="ms-1 text-muted-foreground tabular-nums">{p.scopes.length}</span></ToggleGroup.Item>
 			<ToggleGroup.Item value="policy">Policy</ToggleGroup.Item>
 			<ToggleGroup.Item value="changes">Changes{#if p.events.length}<span class="ms-1 text-muted-foreground tabular-nums">{p.events.length}</span>{/if}</ToggleGroup.Item>
+			<ToggleGroup.Item value="notes">Notes{#if me.hasNote}<span class="ms-1 size-1.5 rounded-full bg-primary" aria-label="has notes"></span>{/if}</ToggleGroup.Item>
 		</ToggleGroup.Root>
+		{#if section === 'scope' && scopeLists.length}
+			<DropdownMenu.Root>
+				<DropdownMenu.Trigger>
+					{#snippet child({ props })}
+						<Button {...props} size="sm" variant="outline"><ClipboardCopyIcon data-icon="inline-start" />Copy scope</Button>
+					{/snippet}
+				</DropdownMenu.Trigger>
+				<DropdownMenu.Content align="start" class="w-60">
+					<DropdownMenu.Group>
+						<DropdownMenu.Label>One per line, for your tools</DropdownMenu.Label>
+						{#each scopeLists as l (l.label)}
+							<DropdownMenu.Item onclick={() => copyList(l.label, l.items)}>{l.label}<span class="ms-auto text-xs text-muted-foreground tabular-nums">{l.items.length}</span></DropdownMenu.Item>
+						{/each}
+					</DropdownMenu.Group>
+					<DropdownMenu.Separator />
+					<DropdownMenu.Item onclick={downloadScope}><DownloadIcon />Download scope (.txt)</DropdownMenu.Item>
+				</DropdownMenu.Content>
+			</DropdownMenu.Root>
+		{/if}
 		{#if section === 'scope' && p.scopes.length > 8}
 			<InputGroup.Root class="w-full sm:ms-auto sm:w-72">
 				<InputGroup.Input bind:value={query} placeholder="Filter assets" aria-label="Filter assets" />
@@ -145,6 +223,8 @@
 		{:else}
 			<p class="py-8 text-center text-sm text-muted-foreground">This program has no policy text.</p>
 		{/if}
+	{:else if section === 'notes'}
+		<ProgramNotes programId={p.id} note={p.note} />
 	{:else if p.events.length === 0}
 		<Empty.Root class="border">
 			<Empty.Header>
@@ -153,7 +233,7 @@
 			</Empty.Header>
 		</Empty.Root>
 	{:else}
-		<ProgramChanges events={p.events} />
+		<ProgramChanges events={p.events} newSince={seenBefore} />
 	{/if}
 </div>
 

@@ -13,6 +13,7 @@
 	import { Kbd } from '$lib/components/ui/kbd/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import { cachedProgramDetail, programDetail } from '$lib/program-details';
+	import { toggleBookmark, withMe } from '$lib/program-me.svelte';
 	import ProgramView, { type ProgramSection } from './program-view.svelte';
 
 	let {
@@ -67,6 +68,9 @@
 		} else if (e.key === 'o' || e.key === 'Enter') {
 			e.preventDefault();
 			onopentab(current);
+		} else if (e.key === 'b') {
+			e.preventDefault();
+			void toggleBookmark(withMe(current));
 		}
 	}
 </script>
@@ -112,6 +116,7 @@
 			<div class="hidden shrink-0 items-center gap-3 border-t px-4 py-1.5 text-xs text-muted-foreground sm:flex">
 				<span class="flex items-center gap-1"><Kbd>←</Kbd><Kbd>→</Kbd> previous / next</span>
 				<span class="flex items-center gap-1"><Kbd>O</Kbd> open in tab</span>
+				<span class="flex items-center gap-1"><Kbd>B</Kbd> bookmark</span>
 				<span class="flex items-center gap-1"><Kbd>Esc</Kbd> close</span>
 			</div>
 		{/if}

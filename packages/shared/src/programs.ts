@@ -61,7 +61,29 @@ export type ProgramSummary = {
 	launchedAt: string | null;
 	currency: string | null;
 	flags: ProgramFlags;
+	/** Your own layer on it, kept by HuntHub. */
+	me: ProgramMe;
 };
+
+/** A user's own layer on a program: kept by HuntHub, never sent to the platform. */
+export type ProgramMe = {
+	bookmarked: boolean;
+	hidden: boolean;
+	tags: string[];
+	hasNote: boolean;
+	/** Changes recorded since you last opened it. */
+	unseen: number;
+	viewedAt: string | null;
+};
+
+/** What a user can change on their layer. */
+export type ProgramMePatch = Partial<Pick<ProgramMe, 'bookmarked' | 'hidden' | 'tags'>> & { note?: string };
+
+/** A scope asset matching a search, e.g. which program has *.example.com. */
+export type AssetMatch = { programId: number; identifier: string; assetType: string; inScope: boolean };
+
+export const MAX_TAGS = 20;
+export const MAX_TAG_LENGTH = 32;
 
 /** What the platform says about how the program runs. */
 export type ProgramFlags = {
@@ -90,6 +112,8 @@ export type ProgramDetail = ProgramSummary & {
 	updatedAt: string;
 	/** Recorded changes, newest first. */
 	events: ProgramEvent[];
+	/** Your notes on it (Markdown). */
+	note: string;
 };
 
 /** The program's page on its platform. */

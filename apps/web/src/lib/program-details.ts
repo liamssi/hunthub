@@ -23,3 +23,9 @@ export function programDetail(id: number): Promise<ProgramDetail | null> {
 }
 
 export const cachedProgramDetail = (id: number) => cache.get(id)?.detail ?? null;
+
+/** Keeps a cached program in step with an edit made here (e.g. its notes). */
+export function patchCachedDetail(id: number, patch: Partial<ProgramDetail>) {
+	const hit = cache.get(id);
+	if (hit) hit.detail = { ...hit.detail, ...patch };
+}
