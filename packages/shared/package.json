@@ -9,7 +9,8 @@
 		"./machines": "./src/machines.ts",
 		"./console": "./src/console.ts",
 		"./preferences": "./src/preferences.ts",
-		"./frames": "./src/frames.ts"
+		"./frames": "./src/frames.ts",
+		"./programs": "./src/programs.ts"
 	},
 	"peerDependencies": {
 		"better-auth": "*"

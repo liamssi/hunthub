@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Markdown from '$lib/components/markdown.svelte';
 	// A read-only view of one file: code and text in CodeMirror (line numbers,
 	// Ctrl+F search, highlighting loaded for the file's language), Markdown
 	// rendered (sanitized), images shown, and clear notices for binary, very
@@ -39,7 +40,6 @@
 	let error = $state<string | null>(null);
 	let loading = $state(true);
 	let editorHost = $state<HTMLDivElement | null>(null);
-	let markdownHtml = $state<string | null>(null);
 	let container: HTMLDivElement;
 
 	const isMarkdown = $derived(/\.(md|mdx|markdown)$/i.test(path));
@@ -68,25 +68,6 @@
 	});
 
 	onMount(() => container.focus({ preventScroll: true }));
-
-	// Markdown: rendered with marked, sanitized with DOMPurify; links open in a new tab.
-	$effect(() => {
-		const f = file;
-		markdownHtml = null;
-		if (!f || f.kind !== 'text' || !isMarkdown) return;
-		void (async () => {
-			const [{ marked }, { default: DOMPurify }] = await Promise.all([import('marked'), import('dompurify')]);
-			DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-				if (node.tagName === 'A') {
-					node.setAttribute('target', '_blank');
-					node.setAttribute('rel', 'noopener noreferrer');
-				}
-			});
-			const html = DOMPurify.sanitize(marked.parse(f.text, { gfm: true, async: false }) as string);
-			DOMPurify.removeHook('afterSanitizeAttributes');
-			if (file === f) markdownHtml = html;
-		})();
-	});
 
 	// Code and text: a read-only CodeMirror editor in the terminal theme's colors.
 	$effect(() => {
@@ -249,9 +230,7 @@
 			</div>
 		{:else if file?.kind === 'text'}
 			{#if isMarkdown && markdownView === 'preview'}
-				<div class="markdown size-full overflow-auto px-8 py-6">
-					{#if markdownHtml !== null}{@html markdownHtml}{:else}<Spinner />{/if}
-				</div>
+				<Markdown source={file.text} class="size-full overflow-auto px-8 py-6" />
 			{:else}
 				<div bind:this={editorHost} class="size-full"></div>
 			{/if}
@@ -270,82 +249,3 @@
 		{/if}
 	</div>
 </div>
-
-<style>
-	/* Readable Markdown without a typography plugin. */
-	.markdown {
-		line-height: 1.7;
-		font-size: 0.925rem;
-	}
-	.markdown :global(:where(h1, h2, h3, h4)) {
-		font-weight: 600;
-		line-height: 1.3;
-		margin: 1.4em 0 0.6em;
-	}
-	.markdown :global(h1) {
-		font-size: 1.6em;
-		border-bottom: 1px solid var(--border);
-		padding-bottom: 0.3em;
-	}
-	.markdown :global(h2) {
-		font-size: 1.3em;
-		border-bottom: 1px solid var(--border);
-		padding-bottom: 0.25em;
-	}
-	.markdown :global(h3) {
-		font-size: 1.1em;
-	}
-	.markdown :global(:where(p, ul, ol, pre, blockquote, table)) {
-		margin: 0.8em 0;
-	}
-	.markdown :global(:where(ul, ol)) {
-		padding-inline-start: 1.5em;
-	}
-	.markdown :global(ul) {
-		list-style: disc;
-	}
-	.markdown :global(ol) {
-		list-style: decimal;
-	}
-	.markdown :global(a) {
-		text-decoration: underline;
-		text-underline-offset: 2px;
-	}
-	.markdown :global(code) {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 0.875em;
-		background: var(--muted);
-		padding: 0.1em 0.35em;
-		border-radius: 4px;
-	}
-	.markdown :global(pre) {
-		background: var(--muted);
-		padding: 0.9em 1em;
-		border-radius: 6px;
-		overflow: auto;
-	}
-	.markdown :global(pre code) {
-		background: none;
-		padding: 0;
-	}
-	.markdown :global(blockquote) {
-		border-inline-start: 3px solid var(--border);
-		padding-inline-start: 1em;
-		color: var(--muted-foreground);
-	}
-	.markdown :global(table) {
-		border-collapse: collapse;
-	}
-	.markdown :global(:where(th, td)) {
-		border: 1px solid var(--border);
-		padding: 0.35em 0.7em;
-	}
-	.markdown :global(img) {
-		max-width: 100%;
-	}
-	.markdown :global(hr) {
-		border: none;
-		border-top: 1px solid var(--border);
-		margin: 1.5em 0;
-	}
-</style>

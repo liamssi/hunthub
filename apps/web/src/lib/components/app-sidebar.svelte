@@ -5,6 +5,7 @@
 	import HouseIcon from '@lucide/svelte/icons/house';
 	import ServerIcon from '@lucide/svelte/icons/server';
 	import SettingsIcon from '@lucide/svelte/icons/settings';
+	import TargetIcon from '@lucide/svelte/icons/target';
 	import UsersIcon from '@lucide/svelte/icons/users';
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
 	import NavMain, { type NavSection } from './nav-main.svelte';
@@ -25,6 +26,7 @@
 			items: [
 				{ title: 'Home', url: '/', icon: HouseIcon },
 				{ title: 'Explore', url: '/explore', icon: CompassIcon },
+				{ title: 'Programs', url: '/programs', icon: TargetIcon },
 				{ title: 'Machines', url: '/machines', icon: ServerIcon }
 			]
 		},

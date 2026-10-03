@@ -8,6 +8,7 @@ import { pruneAttention } from './herdr/attention';
 import { loadConnectionSettings } from './machines/connection-settings';
 import { startOfflineSweep, stopOfflineSweep } from './machines/registry';
 import { startStatsJobs, stopStatsJobs } from './machines/stats';
+import { startProgramSync, stopProgramSync } from './programs/sync';
 
 const root = new Hono();
 root.use(logger());
@@ -29,10 +30,12 @@ const server = Bun.serve({ port: Number(process.env.PORT ?? 3000), fetch: root.f
 });
 startStatsJobs();
 startOfflineSweep();
+startProgramSync();
 console.log(`api listening on :${server.port}`);
 
 async function shutdown() {
 	stopOfflineSweep();
+	stopProgramSync();
 	await stopStatsJobs();
 	await server.stop();
 	await client.end({ timeout: 5 });

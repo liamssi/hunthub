@@ -64,6 +64,20 @@
       "when": 1790513575824,
       "tag": "0008_smart_iron_patriot",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791042634714,
+      "tag": "0009_public_cyclops",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791044056977,
+      "tag": "0010_closed_starfox",
+      "breakpoints": true
     }
   ]
 }
