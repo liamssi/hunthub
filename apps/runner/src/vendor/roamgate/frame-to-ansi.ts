@@ -69,6 +69,59 @@ function isDefaultBlank(cell: CellData): boolean {
   );
 }
 
+/** One row as ANSI (no positioning): styled cells, trailing default blanks trimmed. */
+export function rowToAnsi(frame: FrameData, y: number, width: number): string {
+  let out = "";
+  const rowStart = y * frame.width;
+  let rowEnd = width;
+  // Trim trailing default blanks; the terminal background fills them.
+  while (rowEnd > 0 && isDefaultBlank(frame.cells[rowStart + rowEnd - 1])) {
+    rowEnd--;
+  }
+  let lastStyle: string | null = null;
+  let linkOpen = false;
+  for (let x = 0; x < rowEnd; x++) {
+    const cell = frame.cells[rowStart + x];
+    if (cell.skip) continue;
+    const cellWidth = Bun.stringWidth(cell.symbol);
+    if (x + cellWidth > width) break;
+    const key = styleKey(cell);
+    if (key !== lastStyle) {
+      if (linkOpen) {
+        out += "\x1b]8;;\x1b\\";
+        linkOpen = false;
+      }
+      out += RESET + sgrStyle(cell);
+      const link = cell.hyperlink;
+      if (link !== null) {
+        const uri = frame.hyperlinks[link];
+        if (uri !== undefined) {
+          out += `\x1b]8;;${uri}\x1b\\`;
+          linkOpen = true;
+        }
+      }
+      lastStyle = key;
+    }
+    out += cell.symbol;
+    // Herdr's wide-character padding is often a normal blank (skip=false).
+    const padding = Math.max(0, cellWidth - 1);
+    x += padding;
+    // xterm can render the same grapheme narrower; anchor the next source cell.
+    if (padding && x + 1 < rowEnd) out += `\x1b[${x + 2}G`;
+  }
+  if (linkOpen) out += "\x1b]8;;\x1b\\";
+  return out;
+}
+
+/** The cursor's position, shape and visibility as ANSI. */
+export function cursorToAnsi(frame: FrameData, width: number, height: number): string {
+  const cursor = frame.cursor;
+  if (cursor?.visible && cursor.x < width && cursor.y < height) {
+    return `${RESET}\x1b[${cursor.y + 1};${cursor.x + 1}H\x1b[${cursor.shape} q\x1b[?25h`;
+  }
+  return "\x1b[?25l";
+}
+
 /** Serialize one frame as a full repaint: home, styled rows, cursor. */
 export function frameToAnsi(
   frame: FrameData,
@@ -81,52 +134,9 @@ export function frameToAnsi(
   let out = `${RESET}\x1b[H\x1b[2J\x1b[?7l`;
   for (let y = 0; y < height; y++) {
     if (y > 0) out += `\x1b[${y + 1};1H`;
-    const rowStart = y * frame.width;
-    let rowEnd = width;
-    // Trim trailing default blanks; the terminal background fills them.
-    while (rowEnd > 0 && isDefaultBlank(frame.cells[rowStart + rowEnd - 1])) {
-      rowEnd--;
-    }
-    let lastStyle: string | null = null;
-    let linkOpen = false;
-    for (let x = 0; x < rowEnd; x++) {
-      const cell = frame.cells[rowStart + x];
-      if (cell.skip) continue;
-      const cellWidth = Bun.stringWidth(cell.symbol);
-      if (x + cellWidth > width) break;
-      const key = styleKey(cell);
-      if (key !== lastStyle) {
-        if (linkOpen) {
-          out += "\x1b]8;;\x1b\\";
-          linkOpen = false;
-        }
-        out += RESET + sgrStyle(cell);
-        const link = cell.hyperlink;
-        if (link !== null) {
-          const uri = frame.hyperlinks[link];
-          if (uri !== undefined) {
-            out += `\x1b]8;;${uri}\x1b\\`;
-            linkOpen = true;
-          }
-        }
-        lastStyle = key;
-      }
-      out += cell.symbol;
-      // Herdr's wide-character padding is often a normal blank (skip=false).
-      const padding = Math.max(0, cellWidth - 1);
-      x += padding;
-      // xterm can render the same grapheme narrower; anchor the next source cell.
-      if (padding && x + 1 < rowEnd) out += `\x1b[${x + 2}G`;
-    }
-    if (linkOpen) out += "\x1b]8;;\x1b\\";
+    out += rowToAnsi(frame, y, width);
   }
   out += "\x1b[?7h";
-  const cursor = frame.cursor;
-  if (cursor?.visible && cursor.x < width && cursor.y < height) {
-    out += `${RESET}\x1b[${cursor.y + 1};${cursor.x + 1}H`;
-    out += `\x1b[${cursor.shape} q\x1b[?25h`;
-  } else {
-    out += "\x1b[?25l";
-  }
+  out += cursorToAnsi(frame, width, height);
   return out;
 }

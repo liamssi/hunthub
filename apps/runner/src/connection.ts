@@ -8,6 +8,7 @@ import {
 	serverMessageSchema
 } from '@hunthub/shared/runner-protocol';
 import { policyAllows, TERMINAL_CONTROL } from '@hunthub/shared/console';
+import { encodeFrame } from '@hunthub/shared/frames';
 import { markRevoked, saveCredential } from './config';
 import { setHubPolicy } from './policy';
 import { HerdrGateway } from './herdr/gateway';
@@ -35,6 +36,9 @@ type Options = {
 };
 
 /** Close codes after which retrying cannot help. */
+/** Unsent data on the hub link beyond this means it's backed up: terminal frames wait. */
+const CONGESTED_BYTES = 512 * 1024;
+
 const FATAL_CLOSES = new Map<number, string>([
 	[RUNNER_CLOSE.revoked, 'This machine was removed from HuntHub.'],
 	[RUNNER_CLOSE.incompatible, 'This runner version is not supported by the hub. Update the runner.']
@@ -128,12 +132,22 @@ export function runConnection({ hubUrl, log, ...opts }: Options): Promise<void> 
 						gateway.start();
 						const g = gateway;
 						terminals?.closeAll();
+						// Frames go as binary messages when the hub takes them (no base64, no JSON).
+						const binary = msg.binaryFrames;
 						terminals = new TerminalManager(
 							send,
 							(name) => g.hasSession(name),
 							log,
 							(name) => g.isRunning(name),
-							(session, paneId) => g.history.noteActivity(session, paneId)
+							(session, paneId) => g.history.noteActivity(session, paneId),
+							{
+								sendFrame: binary
+									? (channel, header, bytes) => {
+										if (ws.readyState === WebSocket.OPEN) ws.send(encodeFrame(header, bytes, channel));
+									}
+									: undefined,
+								congested: () => ws.bufferedAmount > CONGESTED_BYTES
+							}
 						);
 						// Host details rarely change; check once a minute.
 						timers.push(
@@ -171,6 +185,12 @@ export function runConnection({ hubUrl, log, ...opts }: Options): Promise<void> 
 						break;
 					case 'term.scroll':
 						terminals?.scroll(msg.channel, msg.direction, msg.lines, msg.column, msg.row);
+						break;
+					case 'term.pause':
+						terminals?.pause(msg.channel, msg.reason, msg.paused);
+						break;
+					case 'term.rate':
+						terminals?.rate(msg.channel, msg.fps);
 						break;
 					case 'term.close':
 						terminals?.close(msg.channel);

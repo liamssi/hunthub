@@ -23,7 +23,8 @@ import { publish } from '../live/hub';
 import { connectionSettings } from '../machines/connection-settings';
 import { resolveCall } from '../herdr/calls';
 import * as herdrState from '../herdr/state';
-import { terminalClosed, terminalFrame } from '../herdr/terminals';
+import { terminalClosed, terminalFrame, terminalFrameBytes } from '../herdr/terminals';
+import { decodeFrame } from '@hunthub/shared/frames';
 import * as registry from '../machines/registry';
 import { toMachineDto } from '../machines/routes';
 import { compressOptions } from '../lib/ws-compress';
@@ -104,7 +105,19 @@ export const runnerRoutes = new Hono<{ Variables: RunnerVariables }>()
 
 			return {
 				async onMessage(event, ws) {
-					const raw = typeof event.data === 'string' ? event.data : '';
+					// Terminal frames come as binary messages (shared/frames.ts).
+					if (typeof event.data !== 'string') {
+						const data = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : null;
+						const frame = helloDone && data ? decodeFrame(data) : null;
+						if (!frame?.channel) {
+							ws.close(RUNNER_CLOSE.badMessage, 'bad message');
+							return;
+						}
+						const { channel, bytes, ...header } = frame;
+						terminalFrameBytes(machineId, channel, header, bytes);
+						return;
+					}
+					const raw = event.data;
 					if (raw.length === 0 || raw.length > RUNNER_MAX_MESSAGE_BYTES) {
 						ws.close(RUNNER_CLOSE.badMessage, 'bad message');
 						return;
@@ -149,6 +162,7 @@ export const runnerRoutes = new Hono<{ Variables: RunnerVariables }>()
 							machineId,
 							serverVersion,
 							policy: parsePolicy(policyRow?.policy) ?? 'full',
+							binaryFrames: true,
 							statsIntervalMs: connectionSettings().statsIntervalMs,
 							heartbeatIntervalMs: connectionSettings().heartbeatIntervalMs
 						});

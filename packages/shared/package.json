@@ -8,7 +8,8 @@
 		"./runner-protocol": "./src/runner-protocol.ts",
 		"./machines": "./src/machines.ts",
 		"./console": "./src/console.ts",
-		"./preferences": "./src/preferences.ts"
+		"./preferences": "./src/preferences.ts",
+		"./frames": "./src/frames.ts"
 	},
 	"peerDependencies": {
 		"better-auth": "*"

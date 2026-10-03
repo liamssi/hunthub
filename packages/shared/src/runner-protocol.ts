@@ -111,7 +111,9 @@ export const serverMessageSchema = z.discriminatedUnion('type', [
 		statsIntervalMs: z.number().int().positive(),
 		heartbeatIntervalMs: z.number().int().positive(),
 		/** What the console may do on this machine (see console.ts); the runner may cap it further. */
-		policy: z.enum(CONSOLE_POLICIES).default('full')
+		policy: z.enum(CONSOLE_POLICIES).default('full'),
+		/** The hub takes terminal frames as binary messages (shared/frames.ts) instead of JSON. */
+		binaryFrames: z.boolean().default(false)
 	}),
 	z.object({ type: z.literal('error'), code: z.enum(runnerErrorCodes), message: z.string() }),
 	/** The machine's console access changed. */
@@ -151,6 +153,13 @@ export const serverMessageSchema = z.discriminatedUnion('type', [
 		row: z.number().int().min(0).max(500).optional()
 	}),
 	z.object({ type: z.literal('term.close'), channel: z.string().max(64) }),
+	/**
+	 * Hold a terminal's frames (it's hidden, or the browser can't keep up) or let them
+	 * flow again; the first frame after a pause repaints the whole screen.
+	 */
+	z.object({ type: z.literal('term.pause'), channel: z.string().max(64), reason: z.enum(['hidden', 'flow']), paused: z.boolean() }),
+	/** At most this many frames per second for a terminal (the browser's link quality). */
+	z.object({ type: z.literal('term.rate'), channel: z.string().max(64), fps: z.number().int().min(1).max(60) }),
 	/** Updated timings; the runner applies them immediately. */
 	z.object({
 		type: z.literal('settings'),

@@ -3,6 +3,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { eq, inArray } from 'drizzle-orm';
 import { websocket } from 'hono/bun';
+import { decodeFrame, encodeFrame } from '@hunthub/shared/frames';
 import { RUNNER_CLOSE, RUNNER_PROTOCOL_VERSION } from '@hunthub/shared/runner-protocol';
 import { app } from '../app';
 import { auth } from '../auth';
@@ -367,13 +368,18 @@ describe('herdr console', () => {
 });
 
 describe('live terminals', () => {
-	/** A fake runner that answers term.open with a frame and echoes input back as frames. */
+	/**
+	 * A fake runner that answers term.open with a JSON frame (as older runners do)
+	 * and echoes input back as binary frames.
+	 */
 	async function terminalRunner(capabilities = ['herdr', 'terminal:cli']) {
 		const { credential, machineId } = await enrolledMachine();
 		const ws = new WebSocket(`${base.replace('http', 'ws')}/api/runner/ws`, { headers: { authorization: `Bearer ${credential}` } });
 		const received: any[] = [];
 		const frame = (channel: string, text: string) =>
 			ws.send(JSON.stringify({ type: 'term.frame', channel, frame: { seq: 1, full: true, width: 80, height: 24, bytes: btoa(text) } }));
+		const binaryFrame = (channel: string, text: string) =>
+			ws.send(encodeFrame({ seq: 2, full: false, width: 80, height: 24 }, new TextEncoder().encode(text), channel));
 		await new Promise<void>((resolve) => {
 			ws.onopen = () => ws.send(JSON.stringify({ type: 'hello', protocol: RUNNER_PROTOCOL_VERSION, runnerVersion: 'test', capabilities, host }));
 			ws.onmessage = (e) => {
@@ -381,7 +387,7 @@ describe('live terminals', () => {
 				if (msg.type === 'welcome') return resolve();
 				received.push(msg);
 				if (msg.type === 'term.open') frame(msg.channel, 'hello');
-				if (msg.type === 'term.input') frame(msg.channel, atob(msg.bytes));
+				if (msg.type === 'term.input') binaryFrame(msg.channel, atob(msg.bytes));
 			};
 		});
 		return { machineId, received, close: () => ws.close() };
@@ -392,9 +398,15 @@ describe('live terminals', () => {
 		const ws = new WebSocket(`${base.replace('http', 'ws')}/api/machines/${machineId}/terminal?${q}`, {
 			headers: { cookie: adminCookie, origin }
 		} as any);
+		ws.binaryType = 'arraybuffer';
 		const messages: any[] = [];
 		const closed = new Promise<void>((resolve) => (ws.onclose = () => resolve()));
-		ws.onmessage = (e) => messages.push(JSON.parse(String(e.data)));
+		// Frames come as binary messages; they're recorded like the old JSON ones.
+		ws.onmessage = (e) => {
+			if (typeof e.data === 'string') return messages.push(JSON.parse(e.data));
+			const f = decodeFrame(new Uint8Array(e.data as ArrayBuffer))!;
+			messages.push({ type: 'frame', seq: f.seq, full: f.full, bytes: btoa(new TextDecoder().decode(f.bytes)) });
+		};
 		return { ws, messages, closed, opened: new Promise<void>((resolve) => (ws.onopen = () => resolve())) };
 	}
 

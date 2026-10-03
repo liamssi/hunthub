@@ -13,6 +13,8 @@ Copied unchanged except:
 - `logger.ts`: only the `Logger` type and `silentLogger`.
 - `endpoint-terminal-session.ts`: imports the logger from `./logger`; adds
   `paneState()` (mouse reporting, alternate screen, size) for HuntHub.
+- `frame-to-ansi.ts`: the row and cursor parts of `frameToAnsi` are exported as
+  `rowToAnsi` / `cursorToAnsi` (same output), so HuntHub can send changed rows only.
 - `endpoint-surface.ts`, `endpoint-client.ts`: keep the pane's
   `alternate_screen_active` flag (`alternateScreen`) instead of skipping it.
 

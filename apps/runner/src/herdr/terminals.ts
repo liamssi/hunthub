@@ -19,6 +19,8 @@ import {
 import { policyAllows, TERMINAL_CONTROL } from '@hunthub/shared/console';
 import { consolePolicy } from '../policy';
 import { EndpointTerminalSession } from '../vendor/roamgate/endpoint-terminal-session';
+import type { FrameData } from '../vendor/roamgate/thin-client';
+import { FramePump } from './frame-pump';
 import { DEFAULT_SESSION, socketPathFor } from './client';
 
 type Open = Extract<ServerMessage, { type: 'term.open' }>;
@@ -36,7 +38,20 @@ const TARGET = /^[A-Za-z0-9:_.-]{1,64}$/;
 interface Channel {
 	write(line: object): void;
 	close(): void;
+	/** Hold frames (hidden, or the browser can't keep up) or let them flow again. */
+	pause?(reason: 'hidden' | 'flow', paused: boolean): void;
+	/** At most this many frames a second. */
+	rate?(fps: number): void;
 }
+
+export type FrameHeader = { seq: number; full: boolean; width: number; height: number };
+
+/** How frames reach the hub, and whether that link is backed up (from the connection). */
+export type TerminalLink = {
+	/** Sends a frame as a binary message; without it, frames go as JSON (older hubs). */
+	sendFrame?: (channel: string, header: FrameHeader, bytes: Buffer) => void;
+	congested?: () => boolean;
+};
 
 export class TerminalManager {
 	private channels = new Map<string, Channel>();
@@ -49,8 +64,30 @@ export class TerminalManager {
 		private readonly log: (msg: string) => void,
 		private readonly sessionRunning: (name: string) => boolean = sessionExists,
 		/** A pane produced output (keeps its history transcript current). */
-		private readonly onActivity: (session: string, paneId: string) => void = () => {}
+		private readonly onActivity: (session: string, paneId: string) => void = () => {},
+		private readonly link: TerminalLink = {}
 	) {}
+
+	/** Sends a frame to the hub; false when it's too large to send. */
+	private frame(channel: string, header: FrameHeader, bytes: Buffer): boolean {
+		if (this.link.sendFrame) {
+			if (bytes.length > RUNNER_MAX_MESSAGE_BYTES - 1024) return false;
+			this.link.sendFrame(channel, header, bytes);
+			return true;
+		}
+		const base64 = bytes.toString('base64');
+		if (base64.length > RUNNER_MAX_MESSAGE_BYTES - 1024) return false;
+		this.send({ type: 'term.frame', channel, frame: { ...header, bytes: base64 } });
+		return true;
+	}
+
+	pause(channel: string, reason: 'hidden' | 'flow', paused: boolean) {
+		this.channels.get(channel)?.pause?.(reason, paused);
+	}
+
+	rate(channel: string, fps: number) {
+		this.channels.get(channel)?.rate?.(fps);
+	}
 
 	open(msg: Open) {
 		const fail = (reason: string) => this.send({ type: 'term.closed', channel: msg.channel, reason });
@@ -112,9 +149,9 @@ export class TerminalManager {
 		const flush = () => {
 			flushTimer = null;
 			if (ended || pending.length === 0) return;
-			const bytes = Buffer.concat(pending).toString('base64');
+			const bytes = Buffer.concat(pending);
 			pending = [];
-			this.send({ type: 'term.frame', channel: msg.channel, frame: { seq: ++seq, full: false, width: size.cols, height: size.rows, bytes } });
+			this.frame(msg.channel, { seq: ++seq, full: false, width: size.cols, height: size.rows }, bytes);
 		};
 
 		const proc = Bun.spawn(args, {
@@ -166,9 +203,19 @@ export class TerminalManager {
 		// Our targets are pane ids already; the endpoint session resolves them to themselves.
 		const session = new EndpointTerminalSession(socket, msg.target, async (id) => id);
 		let ended = false;
+		let seq = 0;
+		// Herdr sends the whole pane on every change; the pump sends changed rows, at a
+		// limited rate, held while hidden (see frame-pump.ts).
+		const pump = new FramePump(
+			(bytes, full, width, height) => {
+				if (!this.frame(msg.channel, { seq: ++seq, full, width, height }, bytes)) end('The terminal is too large to stream; make it smaller.');
+			},
+			{ congested: this.link.congested }
+		);
 		const end = (reason: string) => {
 			if (ended) return;
 			ended = true;
+			pump.close();
 			session.close();
 			this.channels.delete(msg.channel);
 			this.send({ type: 'term.closed', channel: msg.channel, reason });
@@ -177,17 +224,15 @@ export class TerminalManager {
 		// Frames are pictures of the pane, without the input modes its program set; the
 		// browser's terminal learns whether to report the mouse from Herdr's pane state.
 		let mouseOn: boolean | null = null;
-		session.on('terminal', (f: { seq: number; width: number; height: number; bytes: Buffer }) => {
+		session.on('terminal', (f: { frame: FrameData }) => {
 			if (ended) return;
 			const mouse = !!session.paneState()?.mouseReporting;
-			let raw = f.bytes;
+			let prefix = '';
 			if (mouse !== mouseOn) {
 				mouseOn = mouse;
-				raw = Buffer.concat([Buffer.from(mouse ? MOUSE_ON : MOUSE_OFF), raw]);
+				prefix = mouse ? MOUSE_ON : MOUSE_OFF;
 			}
-			const bytes = raw.toString('base64');
-			if (bytes.length > RUNNER_MAX_MESSAGE_BYTES - 1024) return end('The terminal is too large to stream; make it smaller.');
-			this.send({ type: 'term.frame', channel: msg.channel, frame: { seq: f.seq, full: true, width: f.width, height: f.height, bytes } });
+			pump.push(f.frame, prefix);
 			this.onActivity(msg.session, msg.target);
 		});
 		session.on('error', (e: Error) => end(`Terminal error: ${e.message}`));
@@ -211,9 +256,15 @@ export class TerminalManager {
 			}
 			const m = line as { type: string; bytes?: string; cols?: number; rows?: number; direction?: 'up' | 'down'; lines?: number; column?: number; row?: number };
 			try {
-				if (m.type === 'terminal.input' && msg.mode === 'control' && m.bytes) session.input(Buffer.from(m.bytes, 'base64'));
-				else if (m.type === 'terminal.resize' && m.cols && m.rows) session.resize(m.cols, m.rows);
-				else if (m.type === 'terminal.scroll' && m.direction && m.lines) scroll(m.direction, m.lines, m.column, m.row);
+				if (m.type === 'terminal.input' && msg.mode === 'control' && m.bytes) {
+					// The echo of what's typed goes out ahead of other frames.
+					pump.boost();
+					session.input(Buffer.from(m.bytes, 'base64'));
+				} else if (m.type === 'terminal.resize' && m.cols && m.rows) session.resize(m.cols, m.rows);
+				else if (m.type === 'terminal.scroll' && m.direction && m.lines) {
+					pump.boost();
+					scroll(m.direction, m.lines, m.column, m.row);
+				}
 			} catch (e) {
 				this.log(`terminal ${msg.channel}: ${e instanceof Error ? e.message : e}`);
 			}
@@ -237,7 +288,12 @@ export class TerminalManager {
 			}
 		};
 
-		return { write, close: () => end('Closed.') };
+		return {
+			write,
+			close: () => end('Closed.'),
+			pause: (reason, paused) => pump.setPaused(reason, paused),
+			rate: (fps) => pump.setFps(fps)
+		};
 	}
 
 	private openCli(msg: Open): Channel {
@@ -291,16 +347,12 @@ export class TerminalManager {
 						continue;
 					}
 					if (parsed.type === 'terminal.frame' && typeof parsed.bytes === 'string') {
-						if (parsed.bytes.length > RUNNER_MAX_MESSAGE_BYTES - 1024) {
+						const header = { seq: parsed.seq ?? 0, full: !!parsed.full, width: parsed.width ?? msg.cols, height: parsed.height ?? msg.rows };
+						if (!this.frame(msg.channel, header, Buffer.from(parsed.bytes, 'base64'))) {
 							closedReason ??= 'The terminal is too large to stream; make it smaller.';
 							channel.close();
 							continue;
 						}
-						this.send({
-							type: 'term.frame',
-							channel: msg.channel,
-							frame: { seq: parsed.seq ?? 0, full: !!parsed.full, width: parsed.width ?? msg.cols, height: parsed.height ?? msg.rows, bytes: parsed.bytes }
-						});
 						this.onActivity(msg.session, msg.target);
 					} else if (parsed.type === 'terminal.closed') {
 						closedReason ??= parsed.reason ? `Terminal closed: ${parsed.reason}` : 'Terminal closed.';

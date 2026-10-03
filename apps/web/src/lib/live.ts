@@ -2,6 +2,7 @@
 // shared by all subscribers, reconnecting with backoff. Topics are
 // re-subscribed after every reconnect.
 import type { LiveServerMessage, LiveTopic } from '@hunthub/shared/machines';
+import { noteOffline, noteRoundTrip } from './link-quality.svelte';
 
 type Handler = (message: LiveServerMessage) => void;
 
@@ -39,6 +40,12 @@ function topicsOf(message: LiveServerMessage): LiveTopic[] {
 	}
 }
 
+/** The live channel is pinged this often to measure the link (see link-quality.svelte.ts). */
+const PING_MS = 5000;
+let pingTimer: ReturnType<typeof setInterval> | null = null;
+const pings = new Map<number, number>();
+let pingId = 0;
+
 function connect() {
 	if (socket || handlers.size === 0) return;
 	const ws = new WebSocket(url());
@@ -46,12 +53,29 @@ function connect() {
 	ws.onopen = () => {
 		attempt = 0;
 		for (const topic of handlers.keys()) sendSubscribe(topic);
+		const ping = () => {
+			if (ws.readyState !== WebSocket.OPEN) return;
+			const id = ++pingId;
+			pings.set(id, performance.now());
+			// Unanswered pings don't pile up.
+			if (pings.size > 10) pings.delete(pings.keys().next().value!);
+			ws.send(JSON.stringify({ type: 'ping', id }));
+		};
+		ping();
+		if (pingTimer) clearInterval(pingTimer);
+		pingTimer = setInterval(ping, PING_MS);
 	};
 	ws.onmessage = (event) => {
 		let message: LiveServerMessage;
 		try {
 			message = JSON.parse(event.data);
 		} catch {
+			return;
+		}
+		if (message.type === 'pong') {
+			const sent = pings.get(message.id);
+			pings.delete(message.id);
+			if (sent !== undefined) noteRoundTrip(performance.now() - sent);
 			return;
 		}
 		const delivered = new Set<Handler>();
@@ -65,6 +89,10 @@ function connect() {
 	};
 	ws.onclose = () => {
 		socket = null;
+		if (pingTimer) clearInterval(pingTimer);
+		pingTimer = null;
+		pings.clear();
+		noteOffline();
 		if (handlers.size === 0) return;
 		const delay = Math.min(30_000, 1000 * 2 ** attempt++);
 		reconnectTimer = setTimeout(() => {

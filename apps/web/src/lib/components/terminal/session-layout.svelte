@@ -1522,6 +1522,7 @@
 											{transport}
 											onscrollup={() => (historyOpen[r.paneId] = true)}
 											oncolschange={(c) => (paneCols[r.paneId] = c)}
+											paused={!active || !current || (!shown && !inZen) || !!historyOpen[r.paneId] || activeFile !== null}
 											onstatechange={(s) => {
 												states[r.paneId] = s;
 												// A takeover happens once; later reconnects ask normally again.

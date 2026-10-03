@@ -13,6 +13,9 @@
 	import { untrack } from 'svelte';
 	import { appearance, fontFamily, loadAppearance, themeColors } from '$lib/terminal-appearance.svelte';
 	import { copyText, openWebLink } from '$lib/clipboard';
+	import { decodeFrame } from '@hunthub/shared/frames';
+	import { framesPerSecond, link } from '$lib/link-quality.svelte';
+	import { pageVisibility } from '$lib/page-visibility.svelte';
 
 	let {
 		machineId,
@@ -25,7 +28,8 @@
 		state = $bindable<TerminalState>({ phase: 'connecting' }),
 		onstatechange,
 		onscrollup,
-		oncolschange
+		oncolschange,
+		paused = false
 	}: {
 		machineId: string;
 		session: string;
@@ -41,6 +45,8 @@
 		onscrollup?: () => void;
 		/** The terminal's width in columns (what the pane's lines are drawn at). */
 		oncolschange?: (cols: number) => void;
+		/** Not on screen (another tab, session, a zoomed pane…): the machine holds its frames. */
+		paused?: boolean;
 	} = $props();
 
 	function setState(next: TerminalState) {
@@ -86,7 +92,21 @@
 	}
 
 	/** The live terminal, for appearance changes; set while connected. */
-	let live: { term: Terminal; refit: () => void } | null = null;
+	let live: { term: Terminal; refit: () => void; send: (msg: object) => void } | null = null;
+
+	// Frames stop while the terminal is out of sight: hidden by the page (paused) or
+	// the whole browser tab is in the background. Shown again, it repaints at once.
+	const holding = $derived(paused || !pageVisibility.visible);
+	$effect(() => {
+		const hold = holding;
+		untrack(() => live?.send({ type: 'pause', paused: hold }));
+	});
+	// Fewer frames a second on a slow link (see link-quality.svelte.ts).
+	const fps = $derived(framesPerSecond(link.level));
+	$effect(() => {
+		const rate = fps;
+		untrack(() => live?.send({ type: 'rate', fps: rate }));
+	});
 
 	/** Resizes settle this long before the terminal follows (a dragged edge sends one resize). */
 	const RESIZE_DEBOUNCE_MS = 150;
@@ -250,24 +270,42 @@
 			const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
 			ws = new WebSocket(`${proto}//${location.host}/api/machines/${machineId}/terminal?${params}`);
 
+			ws.binaryType = 'arraybuffer';
+			// The hub's preferences, and the terminal's own state, once the socket is open.
+			ws.onopen = () => {
+				untrack(() => {
+					if (holding) send({ type: 'pause', paused: true });
+					send({ type: 'rate', fps });
+				});
+			};
 			ws.onmessage = (event) => {
+				// Frames come as binary messages (shared/frames.ts); control messages as JSON.
+				if (event.data instanceof ArrayBuffer) {
+					const frame = decodeFrame(new Uint8Array(event.data));
+					if (frame) onFrame(frame.full, frame.bytes);
+					return;
+				}
 				let msg: { type?: string; bytes?: string; reason?: string; full?: boolean };
 				try {
 					msg = JSON.parse(String(event.data));
 				} catch {
 					return;
 				}
-				if (msg.type === 'frame' && msg.bytes) {
+				if (msg.type === 'frame' && msg.bytes) onFrame(!!msg.full, fromBase64(msg.bytes));
+				else if (msg.type === 'closed') setState({ phase: 'closed', reason: msg.reason });
+			};
+			function onFrame(full: boolean, data: Uint8Array) {
+				{
 					if (state.phase !== 'live') setState({ phase: 'live' });
 					let clear = false;
 					if (awaitingFull) {
-						if (!msg.full) return; // Drawn for the old size; the full redraw is on its way.
+						if (!full) return; // Drawn for the old size; the full redraw is on its way.
 						awaitingFull = false;
 						clearTimeout(awaitTimer);
 						clear = true;
 					}
-					let bytes = fromBase64(msg.bytes);
-					if (hostBackground === undefined && (msg as { full?: boolean }).full) {
+					let bytes = data;
+					if (hostBackground === undefined && full) {
 						hostBackground = learnHostBackground(new TextDecoder().decode(bytes));
 						if (hostBackground) hostPattern = new RegExp(`(\\x1b\\[(?:[0-9;]*;)?)48;2;${hostBackground}(?=[;m])`, 'g');
 					}
@@ -280,10 +318,8 @@
 						bytes = joined;
 					}
 					term?.write(bytes);
-				} else if (msg.type === 'closed') {
-					setState({ phase: 'closed', reason: msg.reason });
 				}
-			};
+			}
 			ws.onclose = (event) => {
 				if (disposed || state.phase === 'closed') return;
 				setState({
@@ -342,7 +378,7 @@
 					term.refresh(0, term.rows - 1);
 				}
 			};
-			live = { term, refit };
+			live = { term, refit, send };
 			observer = new ResizeObserver(() => {
 				clearTimeout(resizeTimer);
 				resizeTimer = setTimeout(refit, RESIZE_DEBOUNCE_MS);

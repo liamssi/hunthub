@@ -27,6 +27,8 @@ export const liveRoutes = new Hono<{ Variables: AuthVariables }>().get(
 					if (!subscribe(client, msg.topic)) send(client, { type: 'error', message: `Cannot subscribe to ${msg.topic}` });
 				} else if (msg.type === 'unsubscribe') {
 					unsubscribe(client, msg.topic);
+				} else if (msg.type === 'ping' && Number.isInteger(msg.id)) {
+					send(client, { type: 'pong', id: msg.id });
 				}
 			},
 			onClose() {

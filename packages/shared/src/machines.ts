@@ -157,7 +157,9 @@ export type LiveTopic = 'machines' | 'agents' | `machine:${string}`;
 
 export type LiveClientMessage =
 	| { type: 'subscribe'; topic: LiveTopic }
-	| { type: 'unsubscribe'; topic: LiveTopic };
+	| { type: 'unsubscribe'; topic: LiveTopic }
+	/** Measures the round trip (the browser shows the link's quality and adapts terminal frame rates). */
+	| { type: 'ping'; id: number };
 
 export type LiveServerMessage =
 	| { type: 'machine.updated'; machine: Machine }
@@ -167,6 +169,7 @@ export type LiveServerMessage =
 	| { type: 'enroll.completed'; tokenId: string; machineId: string }
 	| { type: 'machine.herdr'; machineId: string; herdr: MachineHerdrView }
 	| { type: 'attention'; event: AttentionEvent }
+	| { type: 'pong'; id: number }
 	| { type: 'error'; message: string };
 
 /** An agent started needing you (it's asking something) or finished its work. */
