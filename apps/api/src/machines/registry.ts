@@ -13,6 +13,7 @@ import * as herdrState from '../herdr/state';
 import { closeMachineTerminals } from '../herdr/terminals';
 import { connectionSettings } from './connection-settings';
 import { forgetMachine, recordSample } from './stats';
+import { compressOptions } from '../lib/ws-compress';
 
 type Connection = {
 	ws: WSContext;
@@ -43,7 +44,9 @@ function topics(machineId: string) {
 }
 
 function sendTo(ws: WSContext, message: ServerMessage) {
-	if (ws.readyState === 1) ws.send(JSON.stringify(message));
+	if (ws.readyState !== 1) return;
+	const data = JSON.stringify(message);
+	ws.send(data, compressOptions(data.length));
 }
 
 async function touchLastSeen(machineId: string, extra: Partial<typeof machine.$inferInsert> = {}) {

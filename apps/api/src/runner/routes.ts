@@ -26,11 +26,14 @@ import * as herdrState from '../herdr/state';
 import { terminalClosed, terminalFrame } from '../herdr/terminals';
 import * as registry from '../machines/registry';
 import { toMachineDto } from '../machines/routes';
+import { compressOptions } from '../lib/ws-compress';
 
 const enrollLimiter = createRateLimiter(10, 60_000);
 
 function send(ws: WSContext, message: ServerMessage) {
-	if (ws.readyState === 1) ws.send(JSON.stringify(message));
+	if (ws.readyState !== 1) return;
+	const data = JSON.stringify(message);
+	ws.send(data, compressOptions(data.length));
 }
 
 type RunnerVariables = { machineId: string; publicIp: string | null };

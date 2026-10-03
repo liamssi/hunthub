@@ -22,7 +22,11 @@ root.onError((err, c) => {
 await loadConnectionSettings();
 await loadRuns();
 await pruneAttention().catch((e) => console.error('attention: prune failed', e));
-const server = Bun.serve({ port: Number(process.env.PORT ?? 3000), fetch: root.fetch, websocket });
+const server = Bun.serve({ port: Number(process.env.PORT ?? 3000), fetch: root.fetch,
+	// Compression with a dedicated 32 KB window per connection: consecutive terminal
+	// frames and state updates are alike, so remembering earlier ones shrinks them a lot.
+	websocket: { ...websocket, perMessageDeflate: { compress: '32KB', decompress: true } }
+});
 startStatsJobs();
 startOfflineSweep();
 console.log(`api listening on :${server.port}`);

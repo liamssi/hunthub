@@ -1,6 +1,7 @@
 // The HTTP API. Tests use it directly; index.ts serves it.
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { compress } from 'hono/compress';
 import { secureHeaders } from 'hono/secure-headers';
 import { sql } from 'drizzle-orm';
 import { auth } from './auth';
@@ -16,6 +17,8 @@ import { attentionRoutes, herdrRoutes, pinRoutes, preferenceRoutes } from './wor
 export const app = new Hono().basePath('/api');
 
 app.use(secureHeaders());
+// JSON responses (history, session state) shrink a lot; the browser decompresses them.
+app.use(compress());
 app.use(bodyLimit({ maxSize: 1024 * 1024, onError: (c) => c.json({ error: 'payload_too_large' }, 413) }));
 
 app.on(['GET', 'POST'], '/auth/*', (c) => auth.handler(c.req.raw));

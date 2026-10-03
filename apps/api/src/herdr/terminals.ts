@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import type { WSContext } from 'hono/ws';
 import type { TerminalFrame } from '@hunthub/shared/runner-protocol';
 import { sendToMachine } from '../machines/registry';
+import { compressOptions } from '../lib/ws-compress';
 
 type Channel = { id: string; machineId: string; browser: WSContext };
 
@@ -52,7 +53,8 @@ function sendToBrowser(channel: Channel, message: object) {
 		closeTerminal(channel.id, 'too slow');
 		return;
 	}
-	ws.send(JSON.stringify(message));
+	const data = JSON.stringify(message);
+	ws.send(data, compressOptions(data.length));
 }
 
 /** A frame from the runner. */

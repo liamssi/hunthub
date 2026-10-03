@@ -3,6 +3,7 @@
 // is needed for data collection, which runs whether or not anyone is watching.
 import type { WSContext } from 'hono/ws';
 import type { LiveServerMessage, LiveTopic } from '@hunthub/shared/machines';
+import { compressOptions } from '../lib/ws-compress';
 
 type Client = {
 	ws: WSContext;
@@ -40,7 +41,8 @@ export function unsubscribe(client: Client, topic: string) {
 
 export function send(client: Client, message: LiveServerMessage) {
 	if (client.ws.readyState !== 1) return;
-	client.ws.send(JSON.stringify(message));
+	const data = JSON.stringify(message);
+	client.ws.send(data, compressOptions(data.length));
 }
 
 /** Sends to every client subscribed to any of the topics (once per client). */
@@ -48,7 +50,7 @@ export function publish(topics: LiveTopic[], message: LiveServerMessage) {
 	const data = JSON.stringify(message);
 	for (const client of clients) {
 		if (client.ws.readyState !== 1) continue;
-		if (topics.some((t) => client.topics.has(t))) client.ws.send(data);
+		if (topics.some((t) => client.topics.has(t))) client.ws.send(data, compressOptions(data.length));
 	}
 }
 
